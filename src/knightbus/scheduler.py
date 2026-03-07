@@ -20,11 +20,15 @@ def poll_realtime() -> None:
         if vehicle_payload:
             inserted = collector.normalize_vehicle_positions(db, vehicle_payload)
             logger.info("stored vehicle positions", extra={"inserted": inserted})
+        else:
+            logger.info("skipping vehicle position poll because no GTFS vehicle URL is configured")
 
         trip_payload = collector.fetch_trip_updates()
         if trip_payload:
             inserted = collector.normalize_trip_updates(db, trip_payload)
             logger.info("stored trip updates", extra={"inserted": inserted})
+        else:
+            logger.info("skipping trip updates poll because no GTFS trip updates URL is configured")
 
 
 def refresh_static() -> None:
@@ -80,4 +84,3 @@ if __name__ == "__main__":
         except Exception:
             logger.exception("scheduler crashed; restarting")
             time.sleep(5)
-

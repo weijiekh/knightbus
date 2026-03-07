@@ -13,7 +13,7 @@ Backend for collecting GTFS static/realtime data and serving RapidKL bus ETA pre
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and fill in the GTFS feed URLs.
+1. Copy `.env.example` to `.env`. It is prefilled for Prasarana `rapid-bus-kl` on data.gov.my.
 2. Install `uv` if it is not already available on your machine:
 
 ```bash
@@ -94,11 +94,20 @@ flowchart TD
 
 ## Current behavior
 
-- Loads GTFS static ZIP files into PostgreSQL
-- Polls GTFS-realtime vehicle/trip feeds on a schedule
+- Loads Prasarana GTFS static ZIP data into PostgreSQL
+- Polls Prasarana GTFS-realtime vehicle positions every 30 seconds
 - Stores raw and normalized snapshots
-- Serves stop ETAs using schedule + realtime delay heuristics
+- Treats trip updates as optional because the current Prasarana GTFS-R docs expose vehicle positions only
+- Serves stop ETAs using schedule + vehicle-progress delay heuristics
 - Exposes a placeholder training command for later ML work
+
+## Prasarana feed defaults
+
+- Static GTFS: `https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-kl`
+- Vehicle positions: `https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-kl`
+- Trip updates: not configured by default
+
+The current data.gov.my GTFS-realtime documentation for Prasarana states that vehicle positions are available now, while trip updates and service alerts are still pending. This repo is configured around that shape.
 
 ## Layout
 
