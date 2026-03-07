@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: knightbus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    env_file:
+      - .env
+    command: uvicorn knightbus.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    env_file:
+      - .env
+    command: python -m knightbus.scheduler
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
+

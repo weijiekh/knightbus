@@ -1,0 +1,51 @@
+[project]
+name = "knightbus"
+version = "0.1.0"
+description = "Backend for collecting GTFS data and serving RapidKL bus ETAs"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14.0",
+  "apscheduler>=3.10.4",
+  "fastapi>=0.115.0",
+  "gtfs-realtime-bindings>=1.0.0",
+  "httpx>=0.28.0",
+  "orjson>=3.10.0",
+  "pydantic-settings>=2.6.0",
+  "psycopg[binary]>=3.2.0",
+  "sqlalchemy>=2.0.36",
+  "uvicorn>=0.32.0",
+]
+
+[project.scripts]
+knightbus-api = "knightbus.main:run"
+knightbus-worker = "knightbus.scheduler:main"
+knightbus-train = "knightbus.training:main"
+
+[project.optional-dependencies]
+ml = [
+  "lightgbm>=4.5.0",
+  "numpy>=2.1.0",
+  "pandas>=2.2.0",
+  "scikit-learn>=1.5.0",
+]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.uv]
+package = true
