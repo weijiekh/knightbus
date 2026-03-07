@@ -50,13 +50,19 @@ uv run python scripts/collect.py
 uv run python scripts/train.py
 ```
 
-8. Run tests:
+8. Inspect latest ingestion counts and timestamps:
+
+```bash
+uv run python scripts/inspect_ingestion.py
+```
+
+9. Run tests:
 
 ```bash
 uv run pytest
 ```
 
-9. Or run both with Docker Compose:
+10. Or run both with Docker Compose:
 
 ```bash
 docker compose up --build
@@ -113,6 +119,7 @@ The current data.gov.my GTFS-realtime documentation for Prasarana states that ve
 
 - `src/knightbus`: application code
 - `scripts/collect.py`: one-off static + realtime collection and feature refresh
+- `scripts/inspect_ingestion.py`: print latest ingestion counts and timestamps
 - `scripts/train.py`: one-off training entrypoint
 - `tests`: basic unit tests
 - `AGENTS.md`: repo instructions for future coding agents
