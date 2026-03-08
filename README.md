@@ -168,11 +168,13 @@ flowchart LR
 ```mermaid
 flowchart TD
     S[APScheduler] --> T1[Refresh static feed daily]
-    S --> T2[Poll realtime every 30s]
+    S --> T2[Poll realtime every 30s during service hours]
+    S --> T5[Poll realtime every 15 min overnight]
     S --> T3[Refresh features every 5 min]
     S --> T4[Register training run daily]
     T1 --> DB[(PostgreSQL)]
     T2 --> DB
+    T5 --> DB
     T3 --> DB
     T4 --> DB
 ```
@@ -180,7 +182,7 @@ flowchart TD
 ## Current behavior
 
 - Loads Prasarana GTFS static ZIP data into PostgreSQL
-- Polls Prasarana GTFS-realtime vehicle positions every 30 seconds
+- Polls Prasarana GTFS-realtime vehicle positions every 30 seconds during service hours and every 15 minutes overnight
 - Stores raw and normalized snapshots
 - Treats trip updates as optional because the current Prasarana GTFS-R docs expose vehicle positions only
 - Serves stop ETAs using schedule + vehicle-progress delay heuristics
@@ -193,6 +195,18 @@ flowchart TD
 - Trip updates: not configured by default
 
 The current data.gov.my GTFS-realtime documentation for Prasarana states that vehicle positions are available now, while trip updates and service alerts are still pending. This repo is configured around that shape.
+
+## Realtime polling window
+
+- Service timezone defaults to `Asia/Kuala_Lumpur`
+- Active poll window defaults to `06:00-00:00` local time
+- Active poll interval defaults to `30 seconds`
+- Off-hours health poll interval defaults to `15 minutes`
+- Configure these with:
+  - `GTFS_SERVICE_TIMEZONE`
+  - `GTFS_ACTIVE_POLL_START_LOCAL`
+  - `GTFS_ACTIVE_POLL_END_LOCAL`
+  - `GTFS_OFF_HOURS_POLL_INTERVAL_SECONDS`
 
 ## Layout
 

@@ -33,6 +33,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Use environment variables from `.env`
 - When running from the host instead of Docker Compose, override `DATABASE_URL` to use `localhost` instead of `db`
 - If `uv` cannot write to its default cache in a sandboxed environment, set `UV_CACHE_DIR` to a writable project-local path such as `.uv-cache`
+- Realtime polling is service-window-aware by default: `06:00-00:00` local time at the normal cadence, then a slower off-hours health poll
 
 ## Code conventions
 
@@ -48,3 +49,4 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Low monthly cost
 - Simple deployment on one VM
 - Prefer starting scraping through the `worker` service so APScheduler keeps polling continuously
+- Prefer limiting high-frequency realtime polling to the configured service window instead of shutting the worker down entirely

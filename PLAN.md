@@ -26,7 +26,8 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
 
 ## Schedules
 
-- Realtime poll: every `30 seconds`
+- Realtime poll: every `30 seconds` during `06:00-00:00` local time
+- Off-hours realtime health poll: every `15 minutes`
 - Static feed refresh: every `24 hours`
 - Feature refresh: every `5 minutes`
 - Training job: every `24 hours`
