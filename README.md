@@ -14,29 +14,78 @@ Backend for collecting GTFS static/realtime data and serving RapidKL bus ETA pre
 ## Quick start
 
 1. Copy `.env.example` to `.env`. It is prefilled for Prasarana `rapid-bus-kl` on data.gov.my.
-2. Start the full stack with Docker Compose:
+2. Start the full stack:
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-This is the recommended way to run the project because the default `DATABASE_URL` uses the Compose service name `db`.
+Docker Compose is the default workflow for this project. The default `DATABASE_URL` uses the Compose service name `db`, so running the stack in containers avoids host/container networking mismatches.
 
-3. Verify ingestion status from inside the app container:
+3. Check container status:
 
 ```bash
-docker compose exec api uv run python scripts/inspect_ingestion.py
+docker compose ps
 ```
 
-4. Verify the API:
+4. Inspect ingestion status:
+
+```bash
+docker compose exec worker uv run python scripts/inspect_ingestion.py
+```
+
+5. Verify the API:
 
 ```bash
 curl http://localhost:56709/v1/health
 ```
 
+6. Trigger a manual training run:
+
+```bash
+docker compose exec worker uv run python scripts/train.py
+```
+
+7. Inspect registered training runs:
+
+```bash
+docker compose exec db psql -U postgres -d knightbus -c "select version, status, created_at from model_versions order by created_at desc limit 10;"
+```
+
+8. List known stops and test an ETA endpoint:
+
+```bash
+docker compose exec db psql -U postgres -d knightbus -c "select stop_id, name from stops limit 20;"
+curl "http://localhost:56709/v1/stops/STOP_ID/etas"
+```
+
+## Common Docker commands
+
+Start or restart a single service:
+
+```bash
+docker compose up -d api
+docker compose up -d worker
+docker compose up -d db
+```
+
+View logs:
+
+```bash
+docker compose logs -f worker
+docker compose logs -f api
+```
+
+If a container exists but is not running:
+
+```bash
+docker compose start api
+docker compose start worker
+```
+
 ## Local non-Docker workflow
 
-Use this only if you want to run the app directly on the host machine.
+Use this only if you explicitly want to run the app on the host machine instead of in Docker.
 
 1. Install `uv` if it is not already available on your machine:
 
