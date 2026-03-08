@@ -14,58 +14,88 @@ Backend for collecting GTFS static/realtime data and serving RapidKL bus ETA pre
 ## Quick start
 
 1. Copy `.env.example` to `.env`. It is prefilled for Prasarana `rapid-bus-kl` on data.gov.my.
-2. Install `uv` if it is not already available on your machine:
+2. Start the full stack with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+This is the recommended way to run the project because the default `DATABASE_URL` uses the Compose service name `db`.
+
+3. Verify ingestion status from inside the app container:
+
+```bash
+docker compose exec api uv run python scripts/inspect_ingestion.py
+```
+
+4. Verify the API:
+
+```bash
+curl http://localhost:8000/v1/health
+```
+
+## Local non-Docker workflow
+
+Use this only if you want to run the app directly on the host machine.
+
+1. Install `uv` if it is not already available on your machine:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-3. Sync dependencies:
+2. Sync dependencies:
 
 ```bash
 uv sync
 ```
 
-4. Start the API locally:
+3. Update `DATABASE_URL` in `.env` to use `localhost` instead of `db`:
+
+```env
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/knightbus
+```
+
+4. Start Postgres:
+
+```bash
+docker compose up db -d
+```
+
+5. Start the API locally:
 
 ```bash
 uv run uvicorn knightbus.main:app --reload
 ```
 
-5. Start the scheduler/collector worker:
+6. Start the scheduler/collector worker:
 
 ```bash
 uv run python -m knightbus.scheduler
 ```
 
-6. Run one-off data collection manually:
+7. Run one-off data collection manually:
 
 ```bash
 uv run python scripts/collect.py
 ```
 
-7. Run one-off training manually:
+8. Run one-off training manually:
 
 ```bash
 uv run python scripts/train.py
 ```
 
-8. Inspect latest ingestion counts and timestamps:
+9. Inspect latest ingestion counts and timestamps:
 
 ```bash
 uv run python scripts/inspect_ingestion.py
 ```
 
-9. Run tests:
+10. Run tests:
 
 ```bash
 uv run pytest
-```
-
-10. Or run both with Docker Compose:
-
-```bash
-docker compose up --build
 ```
 
 ## Architecture
