@@ -24,10 +24,15 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 ## Development workflow
 
 - Install dependencies with `uv sync`
+- Default local runtime is `docker compose up --build`
 - Run the API with `uv run uvicorn knightbus.main:app --reload`
 - Run the worker with `uv run python -m knightbus.scheduler`
+- Run one-off collection with `uv run python scripts/collect.py`
+- Inspect ingestion with `uv run python scripts/inspect_ingestion.py`
 - Run tests with `uv run pytest`
 - Use environment variables from `.env`
+- When running from the host instead of Docker Compose, override `DATABASE_URL` to use `localhost` instead of `db`
+- If `uv` cannot write to its default cache in a sandboxed environment, set `UV_CACHE_DIR` to a writable project-local path such as `.uv-cache`
 
 ## Code conventions
 
@@ -42,3 +47,4 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Clear fallback behavior when realtime data is missing
 - Low monthly cost
 - Simple deployment on one VM
+- Prefer starting scraping through the `worker` service so APScheduler keeps polling continuously

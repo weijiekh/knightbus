@@ -21,6 +21,8 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
   - `api`
   - `worker`
   - `db`
+- Default scraping path: start `db` and `worker` together so APScheduler can run continuously
+- Host-side commands are supported for debugging, but they must point `DATABASE_URL` at `localhost` because `.env` is Compose-oriented and uses the `db` hostname
 
 ## Schedules
 
@@ -41,8 +43,7 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
 
 1. Confirm the RapidKL GTFS static and realtime feed URLs
 2. Run `uv sync`
-3. Start Postgres and the backend locally
-4. Load a static feed snapshot
-5. Verify that realtime polling writes snapshots and normalized records
-6. Test `/v1/stops/{stop_id}/etas` with a known stop
-
+3. Start scraping with `docker compose up -d db worker`
+4. For host-only debugging, run `uv run python scripts/collect.py` with `DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/knightbus`
+5. Verify ingestion with `uv run python scripts/inspect_ingestion.py`
+6. Start the API and test `/v1/stops/{stop_id}/etas` with a known stop
