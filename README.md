@@ -31,7 +31,7 @@ docker compose exec api uv run python scripts/inspect_ingestion.py
 4. Verify the API:
 
 ```bash
-curl http://localhost:8000/v1/health
+curl http://localhost:56709/v1/health
 ```
 
 ## Local non-Docker workflow
@@ -65,7 +65,7 @@ docker compose up db -d
 5. Start the API locally:
 
 ```bash
-uv run uvicorn knightbus.main:app --reload
+uv run uvicorn knightbus.main:app --host 0.0.0.0 --port 56709 --reload
 ```
 
 6. Start the scheduler/collector worker:

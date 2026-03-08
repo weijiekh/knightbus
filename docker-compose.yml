@@ -14,11 +14,11 @@ services:
     build: .
     env_file:
       - .env
-    command: uvicorn knightbus.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn knightbus.main:app --host 0.0.0.0 --port 56709
     depends_on:
       - db
     ports:
-      - "8000:8000"
+      - "56709:56709"
 
   worker:
     build: .
@@ -30,4 +30,3 @@ services:
 
 volumes:
   postgres_data:
-
