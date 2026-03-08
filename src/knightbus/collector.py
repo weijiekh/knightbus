@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import gtfs_realtime_bindings.gtfs_realtime_pb2 as gtfs_rt
 import httpx
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
+from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
 from knightbus.config import get_settings
 from knightbus.models import RawSnapshot, Route, Stop, StopTime, Trip, TripUpdateState, VehicleState
@@ -201,4 +201,3 @@ class GTFSCollector:
         with archive.open(path) as file_obj:
             text_file = io.TextIOWrapper(file_obj, encoding="utf-8-sig")
             return list(csv.DictReader(text_file))
-
