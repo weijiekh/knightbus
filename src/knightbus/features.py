@@ -21,6 +21,16 @@ FEATURE_COLUMNS = [
 ]
 
 CATEGORICAL_COLUMNS = ["route_id", "stop_id"]
+NUMERIC_COLUMNS = [
+    "stop_sequence",
+    "hour_of_day",
+    "day_of_week",
+    "scheduled_eta_seconds",
+    "delay_seconds",
+    "vehicle_distance_m",
+    "vehicle_time_since_update_seconds",
+    "vehicle_stop_sequence",
+]
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from knightbus.features import NUMERIC_COLUMNS
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +27,10 @@ class ResidualModel:
         df = pd.DataFrame([row])
         for col in self.categorical_columns:
             if col in df.columns:
-                df[col] = df[col].astype("category")
+                df[col] = df[col].fillna("unknown").astype("category")
+        for col in NUMERIC_COLUMNS:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
         return float(self.model.predict(df)[0])
 
 

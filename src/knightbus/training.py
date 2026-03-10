@@ -6,7 +6,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from knightbus.config import get_settings
-from knightbus.features import CATEGORICAL_COLUMNS, FEATURE_COLUMNS, build_feature_row
+from knightbus.features import CATEGORICAL_COLUMNS, FEATURE_COLUMNS, NUMERIC_COLUMNS, build_feature_row
 from knightbus.ml import save_residual_model
 from knightbus.models import ModelVersion, Stop, StopTime, Trip, VehicleState
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters
@@ -63,6 +63,13 @@ class TrainingService:
         df["baseline_eta_seconds"] = [row.baseline_eta_seconds for row in rows]
         df["label_eta_seconds"] = [row.label_eta_seconds for row in rows]
         df["observed_at"] = [row.observed_at for row in rows]
+
+        for col in CATEGORICAL_COLUMNS:
+            if col in df.columns:
+                df[col] = df[col].fillna("unknown").astype("category")
+        for col in NUMERIC_COLUMNS:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
         n = len(df)
         test_size = max(1, int(n * 0.15))
