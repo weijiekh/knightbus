@@ -38,7 +38,7 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
 1. Use GTFS schedule as the baseline
 2. Apply trip update arrival times when present
 3. Apply realtime delay heuristics when explicit arrival time is absent
-4. Add a LightGBM model later once enough data is collected
+4. Add a LightGBM residual model (optional) trained on vehicle-position-derived arrivals
 
 ## Immediate next steps
 

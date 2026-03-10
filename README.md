@@ -40,11 +40,13 @@ docker compose exec worker uv run python scripts/inspect_ingestion.py
 curl http://localhost:56709/v1/health
 ```
 
-6. Trigger a manual training run:
+6. Trigger a manual training run (LightGBM optional, labels derived from vehicle positions):
 
 ```bash
 docker compose exec worker uv run python scripts/train.py
 ```
+
+Training uses vehicle position history and GTFS stop coordinates to derive arrival labels.
 
 7. Inspect registered training runs:
 
@@ -97,6 +99,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 uv sync
+```
+
+If you want ML training/inference, install optional ML dependencies:
+
+```bash
+uv sync --extra ml
 ```
 
 3. Update `DATABASE_URL` in `.env` to use `localhost` instead of `db`:
@@ -186,7 +194,8 @@ flowchart TD
 - Stores raw and normalized snapshots
 - Treats trip updates as optional because the current Prasarana GTFS-R docs expose vehicle positions only
 - Serves stop ETAs using schedule + vehicle-progress delay heuristics
-- Exposes a placeholder training command for later ML work
+- Optionally applies a LightGBM residual model when trained
+  - Training labels are derived from vehicle position proximity to GTFS stop coordinates
 
 ## Prasarana feed defaults
 
@@ -213,7 +222,7 @@ The current data.gov.my GTFS-realtime documentation for Prasarana states that ve
 - `src/knightbus`: application code
 - `scripts/collect.py`: one-off static + realtime collection and feature refresh
 - `scripts/inspect_ingestion.py`: print latest ingestion counts and timestamps
-- `scripts/train.py`: one-off training entrypoint
+- `scripts/train.py`: one-off training entrypoint (LightGBM optional)
 - `tests`: basic unit tests
 - `AGENTS.md`: repo instructions for future coding agents
 - `PLAN.md`: implementation and operating plan
@@ -224,7 +233,9 @@ The current data.gov.my GTFS-realtime documentation for Prasarana states that ve
 - Scheduled workflows: `src/knightbus/scheduler.py`
 - ETL and aggregations: `src/knightbus/etl.py`
 - ETA prediction: `src/knightbus/predictor.py`
-- Training registration: `src/knightbus/training.py`
+- Training and model registry: `src/knightbus/training.py`
+- Feature extraction for ML: `src/knightbus/features.py`
+- Model load/save helpers: `src/knightbus/ml.py`
 
 ## Default deployment shape
 

@@ -1,14 +1,21 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Select, desc, select
 from sqlalchemy.orm import Session
 
+from knightbus.config import get_settings
+from knightbus.features import build_feature_row
+from knightbus.ml import ResidualModel, load_residual_model
 from knightbus.models import ModelVersion, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.schemas import EtaItem, ModelInfoResponse
-from knightbus.utils import scheduled_seconds_to_datetime
+from knightbus.utils import delay_from_vehicle_progress, scheduled_seconds_to_datetime
 
 
 class ETAPredictor:
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._ml_model: ResidualModel | None = load_residual_model(settings.model_artifact_path)
+
     def get_stop_etas(self, db: Session, stop_id: str, route_id: str | None = None) -> list[EtaItem]:
         now = datetime.now(timezone.utc)
         stop = db.execute(select(Stop).where(Stop.stop_id == stop_id)).scalars().first()
@@ -37,7 +44,7 @@ class ETAPredictor:
             delay_seconds = trip_update.delay_seconds if trip_update and trip_update.delay_seconds is not None else None
 
             if delay_seconds is None and vehicle:
-                delay_seconds = self._delay_from_vehicle_progress(
+                delay_seconds = delay_from_vehicle_progress(
                     now=now,
                     vehicle=vehicle,
                     trip_schedule_seconds=trip_schedule_seconds.get(trip.id, {}),
@@ -57,6 +64,25 @@ class ETAPredictor:
             else:
                 predicted_arrival = None
                 source = "schedule"
+
+            if (
+                predicted_arrival
+                and self._ml_model is not None
+                and not (trip_update and trip_update.arrival_time_unix)
+            ):
+                feature_row = build_feature_row(
+                    now=now,
+                    stop=stop,
+                    stop_time=stop_time,
+                    trip=trip,
+                    vehicle=vehicle,
+                    delay_seconds=delay_seconds,
+                )
+                if feature_row.baseline_eta_seconds is not None:
+                    residual_seconds = self._ml_model.predict(feature_row.features)
+                    adjusted_seconds = max(0, int(feature_row.baseline_eta_seconds + residual_seconds))
+                    predicted_arrival = now + timedelta(seconds=adjusted_seconds)
+                    source = "ml_residual"
 
             minutes_away = None
             if predicted_arrival:
@@ -146,24 +172,3 @@ class ETAPredictor:
         for trip_id_ref, stop_sequence, arrival_seconds in rows:
             schedule.setdefault(trip_id_ref, {})[stop_sequence] = arrival_seconds
         return schedule
-
-    @staticmethod
-    def _delay_from_vehicle_progress(
-        now: datetime,
-        vehicle: VehicleState,
-        trip_schedule_seconds: dict[int, int | None],
-    ) -> int | None:
-        if vehicle.current_stop_sequence is None:
-            return None
-
-        scheduled_current_seconds = trip_schedule_seconds.get(vehicle.current_stop_sequence)
-        scheduled_current_time = scheduled_seconds_to_datetime(now, scheduled_current_seconds)
-        if scheduled_current_time is None:
-            return None
-
-        observed_time = (
-            datetime.fromtimestamp(vehicle.timestamp_unix, tz=timezone.utc)
-            if vehicle.timestamp_unix is not None
-            else vehicle.observed_at
-        )
-        return int((observed_time - scheduled_current_time).total_seconds())
