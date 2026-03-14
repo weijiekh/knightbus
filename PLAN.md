@@ -30,7 +30,7 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
 - Off-hours realtime health poll: every `15 minutes`
 - Static feed refresh: every `24 hours`
 - Feature refresh: every `5 minutes`
-- Training job: every `24 hours`
+- Training job: every `24 hours` (requires ≥5,000 rows and fresh data within 48h)
 - Cleanup/retention: add later when data volume grows
 
 ## ETA strategy
@@ -39,6 +39,10 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
 2. Apply trip update arrival times when present
 3. Apply realtime delay heuristics when explicit arrival time is absent
 4. Add a LightGBM residual model (optional) trained on vehicle-position-derived arrivals
+   - Minimum 5,000 labeled rows required; training returns `insufficient_data` until then
+   - Stale data guard: training returns `stale_data` if newest row is >48 hours old
+   - Up to 200,000 rows used for training; LightGBM handles this efficiently
+   - Metrics log per-route/stop coverage to surface under-represented categories
 
 ## Immediate next steps
 

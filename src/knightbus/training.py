@@ -1,6 +1,7 @@
 import json
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -11,10 +12,11 @@ from knightbus.ml import save_residual_model
 from knightbus.models import ModelVersion, Stop, StopTime, Trip, VehicleState
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters
 
-MIN_TRAINING_ROWS = 500
-MAX_TRAINING_ROWS = 50000
+MIN_TRAINING_ROWS = 5000
+MAX_TRAINING_ROWS = 200000
 ARRIVAL_RADIUS_METERS = 80.0
 MIN_ARRIVAL_GAP_SECONDS = 120
+STALENESS_HOURS = 48
 
 
 @dataclass(frozen=True)
@@ -52,13 +54,29 @@ class TrainingService:
                 version=version,
                 status="insufficient_data",
                 metrics={
-                    "message": "Not enough labeled rows to train.",
+                    "message": f"Not enough labeled rows to train (need {MIN_TRAINING_ROWS}).",
                     "row_count": len(rows),
                 },
             )
             return model
 
         rows.sort(key=lambda row: row.observed_at)
+
+        newest_row = rows[-1].observed_at
+        staleness = datetime.now(timezone.utc) - newest_row
+        if staleness > timedelta(hours=STALENESS_HOURS):
+            model = self._record_status(
+                db,
+                version=version,
+                status="stale_data",
+                metrics={
+                    "message": f"Newest training row is {staleness.total_seconds() / 3600:.1f}h old (limit {STALENESS_HOURS}h).",
+                    "row_count": len(rows),
+                    "newest_row_age_hours": round(staleness.total_seconds() / 3600, 1),
+                },
+            )
+            return model
+
         df = pd.DataFrame([row.features for row in rows])
         df["baseline_eta_seconds"] = [row.baseline_eta_seconds for row in rows]
         df["label_eta_seconds"] = [row.label_eta_seconds for row in rows]
@@ -139,6 +157,19 @@ class TrainingService:
                 "p90": float(np.percentile(abs_err, 90)),
             }
 
+        route_counts = Counter(df["route_id"].astype(str))
+        route_coverage = {
+            "total_routes": len(route_counts),
+            "rows_per_route": dict(route_counts.most_common()),
+            "routes_below_100": [r for r, c in route_counts.items() if c < 100],
+        }
+
+        stop_counts = Counter(df["stop_id"].astype(str))
+        stop_coverage = {
+            "total_stops": len(stop_counts),
+            "stops_below_50": sum(1 for c in stop_counts.values() if c < 50),
+        }
+
         metrics = {
             "rows": len(rows),
             "train_rows": len(train_df),
@@ -152,6 +183,8 @@ class TrainingService:
                 "val": evaluate(val_df),
                 "test": evaluate(test_df),
             },
+            "route_coverage": route_coverage,
+            "stop_coverage": stop_coverage,
             "feature_columns": FEATURE_COLUMNS,
             "categorical_columns": CATEGORICAL_COLUMNS,
             "artifact_path": settings.model_artifact_path,

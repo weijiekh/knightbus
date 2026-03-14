@@ -20,6 +20,9 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Prefer schedule + heuristic ETA behavior over speculative ML complexity
 - Treat GTFS ingestion and normalization as first-class production code, not notebook logic
 - Keep training code isolated so it can stay optional in low-cost deployments
+- ML training requires at least 5,000 labeled rows (ideally 1–2 weeks of vehicle position history) before activating
+- Training is skipped if the newest data is older than 48 hours to prevent stale models
+- Training metrics include per-route and per-stop coverage; check `routes_below_100` and `stops_below_50` to identify under-represented categories
 
 ## Development workflow
 
