@@ -2,9 +2,16 @@ from functools import lru_cache
 from datetime import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class FeedConfig(BaseModel):
+    name: str
+    static_url: str | None = None
+    vehicle_positions_url: str | None = None
+    trip_updates_url: str | None = None
 
 
 class Settings(BaseSettings):
@@ -17,6 +24,7 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://postgres:postgres@localhost:5432/knightbus",
         alias="DATABASE_URL",
     )
+    gtfs_feeds: list[FeedConfig] = Field(default_factory=list, alias="GTFS_FEEDS")
     gtfs_static_url: str | None = Field(default=None, alias="GTFS_STATIC_URL")
     gtfs_vehicle_positions_url: str | None = Field(default=None, alias="GTFS_VEHICLE_POSITIONS_URL")
     gtfs_trip_updates_url: str | None = Field(default=None, alias="GTFS_TRIP_UPDATES_URL")
@@ -71,6 +79,19 @@ class Settings(BaseSettings):
     @property
     def gtfs_active_poll_end_time(self) -> time:
         return self.parse_local_time(self.gtfs_active_poll_end_local)
+
+    @property
+    def resolved_feeds(self) -> list[FeedConfig]:
+        if self.gtfs_feeds:
+            return self.gtfs_feeds
+        return [
+            FeedConfig(
+                name="default",
+                static_url=self.gtfs_static_url,
+                vehicle_positions_url=self.gtfs_vehicle_positions_url,
+                trip_updates_url=self.gtfs_trip_updates_url,
+            )
+        ]
 
 
 @lru_cache

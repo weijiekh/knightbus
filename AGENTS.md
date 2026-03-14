@@ -34,6 +34,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Inspect ingestion with `uv run python scripts/inspect_ingestion.py`
 - Run tests with `uv run pytest`
 - Use environment variables from `.env`
+- Configure multiple GTFS feeds via the `GTFS_FEEDS` JSON env var (see `.env.example`); falls back to legacy single-feed vars if not set
 - When running from the host instead of Docker Compose, override `DATABASE_URL` to use `localhost` instead of `db`
 - If `uv` cannot write to its default cache in a sandboxed environment, set `UV_CACHE_DIR` to a writable project-local path such as `.uv-cache`
 - Realtime polling is service-window-aware by default: `06:00-00:00` local time at the normal cadence, then a slower off-hours health poll

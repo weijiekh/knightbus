@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
-from knightbus.config import get_settings
+from knightbus.config import FeedConfig, get_settings
 from knightbus.models import RawSnapshot, Route, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.utils import parse_gtfs_time_to_seconds
 
@@ -23,8 +23,11 @@ class FeedPayload:
 
 
 class GTFSCollector:
-    def __init__(self) -> None:
+    def __init__(self, feed: FeedConfig | None = None) -> None:
         self.settings = get_settings()
+        if feed is None:
+            feed = self.settings.resolved_feeds[0]
+        self.feed = feed
 
     def _fetch_bytes(self, url: str) -> FeedPayload:
         timeout = self.settings.gtfs_request_timeout_seconds
@@ -34,19 +37,19 @@ class GTFSCollector:
             return FeedPayload(url=url, fetched_at=datetime.now(timezone.utc), payload=response.content)
 
     def fetch_static(self) -> FeedPayload | None:
-        if not self.settings.gtfs_static_url:
+        if not self.feed.static_url:
             return None
-        return self._fetch_bytes(self.settings.gtfs_static_url)
+        return self._fetch_bytes(self.feed.static_url)
 
     def fetch_vehicle_positions(self) -> FeedPayload | None:
-        if not self.settings.gtfs_vehicle_positions_url:
+        if not self.feed.vehicle_positions_url:
             return None
-        return self._fetch_bytes(self.settings.gtfs_vehicle_positions_url)
+        return self._fetch_bytes(self.feed.vehicle_positions_url)
 
     def fetch_trip_updates(self) -> FeedPayload | None:
-        if not self.settings.gtfs_trip_updates_url:
+        if not self.feed.trip_updates_url:
             return None
-        return self._fetch_bytes(self.settings.gtfs_trip_updates_url)
+        return self._fetch_bytes(self.feed.trip_updates_url)
 
     @staticmethod
     def persist_raw_snapshot(db: Session, feed_type: str, payload: FeedPayload) -> None:
@@ -60,20 +63,21 @@ class GTFSCollector:
         )
         db.commit()
 
-    @staticmethod
-    def load_static_feed(db: Session, payload: FeedPayload) -> None:
-        GTFSCollector.persist_raw_snapshot(db, "static", payload)
+    def load_static_feed(self, db: Session, payload: FeedPayload) -> None:
+        self.persist_raw_snapshot(db, "static", payload)
 
         with zipfile.ZipFile(io.BytesIO(payload.payload)) as archive:
-            routes = GTFSCollector._read_csv(archive, "routes.txt")
-            stops = GTFSCollector._read_csv(archive, "stops.txt")
-            trips = GTFSCollector._read_csv(archive, "trips.txt")
-            stop_times = GTFSCollector._read_csv(archive, "stop_times.txt")
+            routes = self._read_csv(archive, "routes.txt")
+            stops = self._read_csv(archive, "stops.txt")
+            trips = self._read_csv(archive, "trips.txt")
+            stop_times = self._read_csv(archive, "stop_times.txt")
 
-        db.execute(delete(StopTime))
-        db.execute(delete(Trip))
-        db.execute(delete(Route))
-        db.execute(delete(Stop))
+        # Delete only data for this feed
+        trip_ids = select(Trip.id).where(Trip.feed_name == self.feed.name)
+        db.execute(delete(StopTime).where(StopTime.trip_id_ref.in_(trip_ids)))
+        db.execute(delete(Trip).where(Trip.feed_name == self.feed.name))
+        db.execute(delete(Route).where(Route.feed_name == self.feed.name))
+        db.execute(delete(Stop).where(Stop.feed_name == self.feed.name))
         db.commit()
 
         stop_lookup: dict[str, Stop] = {}
@@ -81,6 +85,7 @@ class GTFSCollector:
 
         for row in routes:
             route = Route(
+                feed_name=self.feed.name,
                 route_id=row.get("route_id", ""),
                 short_name=row.get("route_short_name"),
                 long_name=row.get("route_long_name"),
@@ -90,6 +95,7 @@ class GTFSCollector:
 
         for row in stops:
             stop = Stop(
+                feed_name=self.feed.name,
                 stop_id=row.get("stop_id", ""),
                 name=row.get("stop_name"),
                 lat=float(row["stop_lat"]) if row.get("stop_lat") else None,
@@ -100,6 +106,7 @@ class GTFSCollector:
 
         for row in trips:
             trip = Trip(
+                feed_name=self.feed.name,
                 trip_id=row.get("trip_id", ""),
                 route_id=row.get("route_id"),
                 service_id=row.get("service_id"),
@@ -131,9 +138,8 @@ class GTFSCollector:
 
         db.commit()
 
-    @staticmethod
-    def normalize_vehicle_positions(db: Session, payload: FeedPayload) -> int:
-        GTFSCollector.persist_raw_snapshot(db, "vehicle_positions", payload)
+    def normalize_vehicle_positions(self, db: Session, payload: FeedPayload) -> int:
+        self.persist_raw_snapshot(db, "vehicle_positions", payload)
         feed = gtfs_rt.FeedMessage()
         feed.ParseFromString(payload.payload)
 
@@ -144,6 +150,7 @@ class GTFSCollector:
             vehicle = entity.vehicle
             db.add(
                 VehicleState(
+                    feed_name=self.feed.name,
                     vehicle_id=vehicle.vehicle.id or entity.id or "unknown",
                     trip_id=vehicle.trip.trip_id or None,
                     route_id=vehicle.trip.route_id or None,
@@ -163,9 +170,8 @@ class GTFSCollector:
         db.commit()
         return inserted
 
-    @staticmethod
-    def normalize_trip_updates(db: Session, payload: FeedPayload) -> int:
-        GTFSCollector.persist_raw_snapshot(db, "trip_updates", payload)
+    def normalize_trip_updates(self, db: Session, payload: FeedPayload) -> int:
+        self.persist_raw_snapshot(db, "trip_updates", payload)
         feed = gtfs_rt.FeedMessage()
         feed.ParseFromString(payload.payload)
 
@@ -178,6 +184,7 @@ class GTFSCollector:
             for stop_update in trip_update.stop_time_update:
                 db.add(
                     TripUpdateState(
+                        feed_name=self.feed.name,
                         trip_id=trip_update.trip.trip_id or entity.id or "unknown",
                         route_id=trip_update.trip.route_id or None,
                         vehicle_id=trip_update.vehicle.id or None,

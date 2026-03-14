@@ -1,6 +1,6 @@
 # Knightbus
 
-Backend for collecting GTFS static/realtime data and serving RapidKL bus ETA predictions.
+Backend for collecting GTFS static/realtime data and serving bus ETA predictions. Supports multiple GTFS feeds from any provider worldwide.
 
 ## Stack
 
@@ -13,7 +13,7 @@ Backend for collecting GTFS static/realtime data and serving RapidKL bus ETA pre
 
 ## Quick start
 
-1. Copy `.env.example` to `.env`. It is prefilled for Prasarana `rapid-bus-kl` on data.gov.my.
+1. Copy `.env.example` to `.env`. It is prefilled for three Prasarana feeds (`rapid-bus-kl`, `rapid-bus-mrtfeeder`, `rapid-bus-penang`) on data.gov.my.
 2. Start the full stack:
 
 ```bash
@@ -189,8 +189,9 @@ flowchart TD
 
 ## Current behavior
 
-- Loads Prasarana GTFS static ZIP data into PostgreSQL
-- Polls Prasarana GTFS-realtime vehicle positions every 30 seconds during service hours and every 15 minutes overnight
+- Collects from multiple GTFS feeds in parallel (configured via `GTFS_FEEDS` env var)
+- Loads GTFS static ZIP data into PostgreSQL, scoped by feed name
+- Polls GTFS-realtime vehicle positions every 30 seconds during service hours and every 15 minutes overnight
 - Stores raw and normalized snapshots
 - Treats trip updates as optional because the current Prasarana GTFS-R docs expose vehicle positions only
 - Serves stop ETAs using schedule + vehicle-progress delay heuristics
@@ -200,11 +201,25 @@ flowchart TD
   - Skips training if the newest data is older than 48 hours to avoid stale models
   - Training metrics include per-route and per-stop coverage to flag under-represented categories
 
+## Multi-feed configuration
+
+Set `GTFS_FEEDS` as a JSON array of feed objects, each with `name`, `static_url`, `vehicle_positions_url`, and optionally `trip_updates_url`. This works with any GTFS provider worldwide.
+
+Example for a non-Prasarana feed:
+
+```env
+GTFS_FEEDS=[{"name":"my-city-bus","static_url":"https://example.com/gtfs-static.zip","vehicle_positions_url":"https://example.com/gtfs-rt/vehicle-positions"}]
+```
+
+If `GTFS_FEEDS` is not set, the system falls back to the legacy single-feed env vars (`GTFS_STATIC_URL`, `GTFS_VEHICLE_POSITIONS_URL`, `GTFS_TRIP_UPDATES_URL`) as a feed named `"default"`.
+
 ## Prasarana feed defaults
 
-- Static GTFS: `https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-kl`
-- Vehicle positions: `https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=rapid-bus-kl`
-- Trip updates: not configured by default
+The default `.env.example` configures three Prasarana feeds:
+
+- `rapid-bus-kl` — RapidKL bus (Kuala Lumpur)
+- `rapid-bus-mrtfeeder` — MRT feeder buses
+- `rapid-bus-penang` — RapidPenang bus
 
 The current data.gov.my GTFS-realtime documentation for Prasarana states that vehicle positions are available now, while trip updates and service alerts are still pending. This repo is configured around that shape.
 

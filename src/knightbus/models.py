@@ -12,9 +12,13 @@ def utcnow() -> datetime:
 
 class Route(Base):
     __tablename__ = "routes"
+    __table_args__ = (
+        UniqueConstraint("feed_name", "route_id", name="uq_routes_feed_route"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    route_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    feed_name: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    route_id: Mapped[str] = mapped_column(String(64), index=True)
     short_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     long_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     route_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -22,9 +26,13 @@ class Route(Base):
 
 class Stop(Base):
     __tablename__ = "stops"
+    __table_args__ = (
+        UniqueConstraint("feed_name", "stop_id", name="uq_stops_feed_stop"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    stop_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    feed_name: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    stop_id: Mapped[str] = mapped_column(String(64), index=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -32,9 +40,13 @@ class Stop(Base):
 
 class Trip(Base):
     __tablename__ = "trips"
+    __table_args__ = (
+        UniqueConstraint("feed_name", "trip_id", name="uq_trips_feed_trip"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    trip_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    feed_name: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    trip_id: Mapped[str] = mapped_column(String(128), index=True)
     route_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     service_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     headsign: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -80,6 +92,7 @@ class VehicleState(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     vehicle_id: Mapped[str] = mapped_column(String(128), index=True)
     trip_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
     route_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
@@ -99,6 +112,7 @@ class TripUpdateState(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     trip_id: Mapped[str] = mapped_column(String(128), index=True)
     route_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     vehicle_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)

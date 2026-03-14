@@ -49,21 +49,22 @@ def poll_realtime(*, active_hours: bool, poll_label: str) -> None:
         logger.info("skipping realtime poll because current local time does not match this poll window", extra={"poll_label": poll_label})
         return
 
-    collector = GTFSCollector()
-    with SessionLocal() as db:
-        vehicle_payload = collector.fetch_vehicle_positions()
-        if vehicle_payload:
-            inserted = collector.normalize_vehicle_positions(db, vehicle_payload)
-            logger.info("stored vehicle positions", extra={"inserted": inserted, "poll_label": poll_label})
-        else:
-            logger.info("skipping vehicle position poll because no GTFS vehicle URL is configured", extra={"poll_label": poll_label})
+    for feed in settings.resolved_feeds:
+        collector = GTFSCollector(feed)
+        with SessionLocal() as db:
+            vehicle_payload = collector.fetch_vehicle_positions()
+            if vehicle_payload:
+                inserted = collector.normalize_vehicle_positions(db, vehicle_payload)
+                logger.info("stored vehicle positions", extra={"feed": feed.name, "inserted": inserted, "poll_label": poll_label})
+            else:
+                logger.info("skipping vehicle position poll because no URL is configured", extra={"feed": feed.name, "poll_label": poll_label})
 
-        trip_payload = collector.fetch_trip_updates()
-        if trip_payload:
-            inserted = collector.normalize_trip_updates(db, trip_payload)
-            logger.info("stored trip updates", extra={"inserted": inserted, "poll_label": poll_label})
-        else:
-            logger.info("skipping trip updates poll because no GTFS trip updates URL is configured", extra={"poll_label": poll_label})
+            trip_payload = collector.fetch_trip_updates()
+            if trip_payload:
+                inserted = collector.normalize_trip_updates(db, trip_payload)
+                logger.info("stored trip updates", extra={"feed": feed.name, "inserted": inserted, "poll_label": poll_label})
+            else:
+                logger.info("skipping trip updates poll because no URL is configured", extra={"feed": feed.name, "poll_label": poll_label})
 
 
 def poll_realtime_active_hours() -> None:
@@ -75,12 +76,14 @@ def poll_realtime_off_hours() -> None:
 
 
 def refresh_static() -> None:
-    collector = GTFSCollector()
-    with SessionLocal() as db:
-        payload = collector.fetch_static()
-        if payload:
-            collector.load_static_feed(db, payload)
-            logger.info("refreshed GTFS static feed")
+    settings = get_settings()
+    for feed in settings.resolved_feeds:
+        collector = GTFSCollector(feed)
+        with SessionLocal() as db:
+            payload = collector.fetch_static()
+            if payload:
+                collector.load_static_feed(db, payload)
+                logger.info("refreshed GTFS static feed", extra={"feed": feed.name})
 
 
 def refresh_features() -> None:

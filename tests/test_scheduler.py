@@ -14,6 +14,7 @@ def build_settings(**overrides: object) -> Settings:
         "GTFS_ACTIVE_POLL_END_LOCAL": "00:00",
         "GTFS_POLL_INTERVAL_SECONDS": 30,
         "GTFS_OFF_HOURS_POLL_INTERVAL_SECONDS": 900,
+        "GTFS_FEEDS": [],
     }
     values.update(overrides)
     return Settings(**values)
@@ -122,6 +123,9 @@ def test_off_hours_poll_executes_realtime_fetch(monkeypatch: pytest.MonkeyPatch)
     calls: list[str] = []
 
     class FakeCollector:
+        def __init__(self, feed=None):
+            pass
+
         def fetch_vehicle_positions(self):
             calls.append("fetch_vehicle_positions")
             return None

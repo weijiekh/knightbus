@@ -6,7 +6,8 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
 
 ## Scope
 
-- Load GTFS static feed into PostgreSQL
+- Collect from multiple GTFS feeds (configured via `GTFS_FEEDS` JSON env var, works with any provider)
+- Load GTFS static feeds into PostgreSQL, scoped by feed name
 - Poll GTFS-realtime vehicle positions and trip updates every 20-30 seconds
 - Store raw snapshots and normalized operational tables
 - Serve stop ETAs and route vehicle positions through FastAPI
