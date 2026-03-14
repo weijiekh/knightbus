@@ -37,6 +37,9 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - When running from the host instead of Docker Compose, override `DATABASE_URL` to use `localhost` instead of `db`
 - If `uv` cannot write to its default cache in a sandboxed environment, set `UV_CACHE_DIR` to a writable project-local path such as `.uv-cache`
 - Realtime polling is service-window-aware by default: `06:00-00:00` local time at the normal cadence, then a slower off-hours health poll
+- Deploy to EC2: see `deploy/README.md` for sizing and launch instructions
+- Bootstrap a new instance with `deploy/ec2-user-data.sh` (passed as EC2 User Data)
+- Update a running instance with `deploy/update.sh`
 
 ## Code conventions
 

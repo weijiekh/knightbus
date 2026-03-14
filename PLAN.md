@@ -23,6 +23,7 @@ Collect RapidKL GTFS data, build historical transit observations, and expose bus
   - `db`
 - Default scraping path: start `db` and `worker` together so APScheduler can run continuously
 - Host-side commands are supported for debugging, but they must point `DATABASE_URL` at `localhost` because `.env` is Compose-oriented and uses the `db` hostname
+- See `deploy/README.md` for launch instructions and `deploy/ec2-user-data.sh` for automated provisioning
 
 ## Schedules
 

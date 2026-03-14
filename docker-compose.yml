@@ -1,5 +1,6 @@
 services:
   db:
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_DB: knightbus
@@ -11,6 +12,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   api:
+    restart: unless-stopped
     build: .
     env_file:
       - .env
@@ -21,6 +23,7 @@ services:
       - "56709:56709"
 
   worker:
+    restart: unless-stopped
     build: .
     env_file:
       - .env
