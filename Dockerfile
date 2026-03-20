@@ -15,6 +15,6 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY scripts ./scripts
 
-RUN uv pip install --system .
+RUN uv pip install --system ".[ml]"
 
 CMD ["uvicorn", "knightbus.main:app", "--host", "0.0.0.0", "--port", "56709"]
