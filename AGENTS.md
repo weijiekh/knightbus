@@ -19,6 +19,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Do not introduce Redis, Celery, Kafka, Airflow, or Kubernetes unless explicitly requested
 - Prefer schedule + heuristic ETA behavior over speculative ML complexity
 - Treat GTFS ingestion and normalization as first-class production code, not notebook logic
+- When a GTFS-realtime feed omits `stop_id`, the collector infers it by matching vehicle GPS to the nearest stop on the route within 200m (`STOP_MATCH_RADIUS_METERS` in `collector.py`)
 - Keep training code isolated so it can stay optional in low-cost deployments
 - ML training requires at least 5,000 labeled rows (ideally 1–2 weeks of vehicle position history) before activating
 - Training is skipped if the newest data is older than 48 hours to prevent stale models

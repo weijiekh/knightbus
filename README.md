@@ -193,6 +193,7 @@ flowchart TD
 - Loads GTFS static ZIP data into PostgreSQL, scoped by feed name
 - Polls GTFS-realtime vehicle positions every 30 seconds during service hours and every 15 minutes overnight
 - Stores raw and normalized snapshots
+- Infers `stop_id` via GPS proximity matching (within 200m) when the feed does not provide it
 - Treats trip updates as optional because the current Prasarana GTFS-R docs expose vehicle positions only
 - Serves stop ETAs using schedule + vehicle-progress delay heuristics
 - Optionally applies a LightGBM residual model when trained

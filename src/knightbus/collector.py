@@ -12,7 +12,9 @@ from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
 from knightbus.config import FeedConfig, get_settings
 from knightbus.models import RawSnapshot, Route, Stop, StopTime, Trip, TripUpdateState, VehicleState
-from knightbus.utils import parse_gtfs_time_to_seconds
+from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
+
+STOP_MATCH_RADIUS_METERS = 200.0
 
 
 @dataclass
@@ -143,24 +145,40 @@ class GTFSCollector:
         feed = gtfs_rt.FeedMessage()
         feed.ParseFromString(payload.payload)
 
+        route_stops_cache: dict[str, list[tuple[str, int, float, float]]] = {}
+
         inserted = 0
         for entity in feed.entity:
             if not entity.HasField("vehicle"):
                 continue
             vehicle = entity.vehicle
+
+            stop_id = vehicle.stop_id or None
+            stop_seq = vehicle.current_stop_sequence or None
+            lat = vehicle.position.latitude if vehicle.HasField("position") else None
+            lon = vehicle.position.longitude if vehicle.HasField("position") else None
+            route_id = vehicle.trip.route_id or None
+
+            if stop_id is None and lat is not None and lon is not None and route_id:
+                matched = self._match_nearest_stop(
+                    db, lat, lon, route_id, route_stops_cache,
+                )
+                if matched:
+                    stop_id, stop_seq = matched
+
             db.add(
                 VehicleState(
                     feed_name=self.feed.name,
                     vehicle_id=vehicle.vehicle.id or entity.id or "unknown",
                     trip_id=vehicle.trip.trip_id or None,
-                    route_id=vehicle.trip.route_id or None,
-                    stop_id=vehicle.stop_id or None,
-                    current_stop_sequence=vehicle.current_stop_sequence or None,
+                    route_id=route_id,
+                    stop_id=stop_id,
+                    current_stop_sequence=stop_seq,
                     current_status=gtfs_rt.VehiclePosition.VehicleStopStatus.Name(vehicle.current_status)
                     if vehicle.current_status is not None
                     else None,
-                    lat=vehicle.position.latitude if vehicle.HasField("position") else None,
-                    lon=vehicle.position.longitude if vehicle.HasField("position") else None,
+                    lat=lat,
+                    lon=lon,
                     timestamp_unix=vehicle.timestamp or None,
                     observed_at=payload.fetched_at,
                 )
@@ -169,6 +187,35 @@ class GTFSCollector:
 
         db.commit()
         return inserted
+
+    @staticmethod
+    def _match_nearest_stop(
+        db: Session,
+        lat: float,
+        lon: float,
+        route_id: str,
+        cache: dict[str, list[tuple[str, int, float, float]]],
+    ) -> tuple[str, int] | None:
+        """Find the nearest stop on a route within STOP_MATCH_RADIUS_METERS."""
+        if route_id not in cache:
+            rows = db.execute(
+                select(Stop.stop_id, StopTime.stop_sequence, Stop.lat, Stop.lon)
+                .join(StopTime, StopTime.stop_id_ref == Stop.id)
+                .join(Trip, Trip.id == StopTime.trip_id_ref)
+                .where(Trip.route_id == route_id, Stop.lat.is_not(None), Stop.lon.is_not(None))
+                .distinct()
+            ).all()
+            cache[route_id] = [(r[0], r[1], r[2], r[3]) for r in rows]
+
+        best_dist = STOP_MATCH_RADIUS_METERS
+        best_match: tuple[str, int] | None = None
+        for stop_id, stop_seq, slat, slon in cache[route_id]:
+            dist = haversine_meters(lat, lon, slat, slon)
+            if dist < best_dist:
+                best_dist = dist
+                best_match = (stop_id, stop_seq)
+
+        return best_match
 
     def normalize_trip_updates(self, db: Session, payload: FeedPayload) -> int:
         self.persist_raw_snapshot(db, "trip_updates", payload)
