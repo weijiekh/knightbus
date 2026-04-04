@@ -15,6 +15,6 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY scripts ./scripts
 
-RUN uv pip install --system ".[ml]"
+RUN uv pip install --system . && uv pip install --system "lightgbm>=4.5.0" "numpy>=2.1.0" "pandas>=2.2.0" "scikit-learn>=1.5.0"
 
 CMD ["uvicorn", "knightbus.main:app", "--host", "0.0.0.0", "--port", "56709"]
