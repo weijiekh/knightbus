@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from knightbus.db import Base
@@ -73,6 +73,39 @@ class StopTime(Base):
 
     trip: Mapped[Trip] = relationship(back_populates="stop_times")
     stop: Mapped[Stop] = relationship()
+
+
+class ServiceCalendar(Base):
+    __tablename__ = "service_calendar"
+    __table_args__ = (
+        UniqueConstraint("feed_name", "service_id", name="uq_service_calendar_feed_service"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    feed_name: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    service_id: Mapped[str] = mapped_column(String(64), index=True)
+    monday: Mapped[bool] = mapped_column(Boolean, default=False)
+    tuesday: Mapped[bool] = mapped_column(Boolean, default=False)
+    wednesday: Mapped[bool] = mapped_column(Boolean, default=False)
+    thursday: Mapped[bool] = mapped_column(Boolean, default=False)
+    friday: Mapped[bool] = mapped_column(Boolean, default=False)
+    saturday: Mapped[bool] = mapped_column(Boolean, default=False)
+    sunday: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_date: Mapped[str] = mapped_column(String(8))  # YYYYMMDD
+    end_date: Mapped[str] = mapped_column(String(8))    # YYYYMMDD
+
+
+class CalendarDate(Base):
+    __tablename__ = "calendar_dates"
+    __table_args__ = (
+        UniqueConstraint("feed_name", "service_id", "date", name="uq_calendar_dates_feed_service_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    feed_name: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    service_id: Mapped[str] = mapped_column(String(64), index=True)
+    date: Mapped[str] = mapped_column(String(8), index=True)  # YYYYMMDD
+    exception_type: Mapped[int] = mapped_column(Integer)  # 1=added, 2=removed
 
 
 class RawSnapshot(Base):

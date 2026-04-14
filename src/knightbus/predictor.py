@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from knightbus.config import get_settings
 from knightbus.features import build_feature_row
 from knightbus.ml import ResidualModel, load_residual_model
-from knightbus.models import ModelVersion, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.models import CalendarDate, ModelVersion, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.schemas import EtaItem, ModelInfoResponse, StopResponse
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters, scheduled_seconds_to_datetime
 
@@ -31,6 +31,10 @@ class ETAPredictor:
         )
         if route_id:
             query = query.where(Trip.route_id == route_id)
+
+        valid_sids = self._valid_service_ids(db, now)
+        if valid_sids is not None:
+            query = query.where(Trip.service_id.in_(valid_sids))
 
         schedule_rows = db.execute(query.limit(25)).all()
         latest_updates = self._latest_trip_updates(db, stop_id)
@@ -94,6 +98,7 @@ class ETAPredictor:
                     stop_id=stop_id,
                     route_id=trip.route_id,
                     trip_id=trip.trip_id,
+                    headsign=trip.headsign,
                     vehicle_id=vehicle.vehicle_id if vehicle else (trip_update.vehicle_id if trip_update else None),
                     predicted_arrival_time=predicted_arrival,
                     scheduled_arrival_time=scheduled_arrival,
@@ -114,6 +119,41 @@ class ETAPredictor:
             .limit(100)
         )
         return list(db.execute(query).scalars().all())
+
+    def _valid_service_ids(self, db: Session, now: datetime) -> set[str] | None:
+        """Return service_ids valid for today, or None if no calendar data exists."""
+        local_now = now.astimezone(self._service_tz)
+        today_str = local_now.strftime("%Y%m%d")
+        day_col = local_now.strftime("%A").lower()  # e.g. "monday"
+
+        # Check if any calendar data exists
+        has_calendar = db.execute(select(ServiceCalendar).limit(1)).scalars().first()
+        if has_calendar is None:
+            return None
+
+        day_filter = getattr(ServiceCalendar, day_col) == True  # noqa: E712
+        rows = db.execute(
+            select(ServiceCalendar.service_id).where(
+                day_filter,
+                ServiceCalendar.start_date <= today_str,
+                ServiceCalendar.end_date >= today_str,
+            )
+        ).scalars().all()
+        valid = set(rows)
+
+        # Apply calendar_dates exceptions
+        exceptions = db.execute(
+            select(CalendarDate.service_id, CalendarDate.exception_type).where(
+                CalendarDate.date == today_str
+            )
+        ).all()
+        for service_id, exception_type in exceptions:
+            if exception_type == 1:
+                valid.add(service_id)
+            elif exception_type == 2:
+                valid.discard(service_id)
+
+        return valid
 
     def get_nearby_stops(
         self, db: Session, lat: float, lon: float, radius_m: float = 500.0, limit: int = 5

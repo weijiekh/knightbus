@@ -931,9 +931,10 @@ function buildEtaRow(item) {
   route.className = "route-pill";
   route.textContent = item.route_id || "—";
 
+  // Show headsign if available, otherwise leave blank — trip_id is internal
   const trip = document.createElement("div");
   trip.className = "eta-trip";
-  trip.textContent = item.trip_id || "";
+  trip.textContent = item.headsign || "";
 
   const m = item.minutes_away;
   const minBlock = document.createElement("div");
@@ -956,10 +957,12 @@ function buildEtaRow(item) {
   badge.textContent = srcLabel(item.prediction_source);
   meta.appendChild(badge);
 
-  if (item.delay_seconds != null && item.delay_seconds > 60) {
+  // Only show delay if it's between 1 and 60 minutes — beyond that is likely stale/bad data
+  const delaySec = item.delay_seconds;
+  if (delaySec != null && delaySec > 60 && delaySec <= 3600) {
     const delay = document.createElement("span");
     delay.className = "delay-badge";
-    delay.textContent = `+${Math.round(item.delay_seconds / 60)}m late`;
+    delay.textContent = `+${Math.round(delaySec / 60)}m late`;
     meta.appendChild(delay);
   }
 

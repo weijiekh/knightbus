@@ -7,6 +7,7 @@ class EtaItem(BaseModel):
     stop_id: str
     route_id: str | None = None
     trip_id: str | None = None
+    headsign: str | None = None
     vehicle_id: str | None = None
     predicted_arrival_time: datetime | None = None
     scheduled_arrival_time: datetime | None = None

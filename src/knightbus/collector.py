@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
 from knightbus.config import FeedConfig, get_settings
-from knightbus.models import RawSnapshot, Route, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.models import CalendarDate, RawSnapshot, Route, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
 
 STOP_MATCH_RADIUS_METERS = 200.0
@@ -73,6 +73,8 @@ class GTFSCollector:
             stops = self._read_csv(archive, "stops.txt")
             trips = self._read_csv(archive, "trips.txt")
             stop_times = self._read_csv(archive, "stop_times.txt")
+            calendar = self._read_csv_optional(archive, "calendar.txt")
+            calendar_dates = self._read_csv_optional(archive, "calendar_dates.txt")
 
         # Delete only data for this feed
         trip_ids = select(Trip.id).where(Trip.feed_name == self.feed.name)
@@ -80,6 +82,8 @@ class GTFSCollector:
         db.execute(delete(Trip).where(Trip.feed_name == self.feed.name))
         db.execute(delete(Route).where(Route.feed_name == self.feed.name))
         db.execute(delete(Stop).where(Stop.feed_name == self.feed.name))
+        db.execute(delete(ServiceCalendar).where(ServiceCalendar.feed_name == self.feed.name))
+        db.execute(delete(CalendarDate).where(CalendarDate.feed_name == self.feed.name))
         db.commit()
 
         stop_lookup: dict[str, Stop] = {}
@@ -137,6 +141,29 @@ class GTFSCollector:
                     departure_seconds=parse_gtfs_time_to_seconds(row.get("departure_time")),
                 )
             )
+
+        for row in calendar:
+            db.add(ServiceCalendar(
+                feed_name=self.feed.name,
+                service_id=row.get("service_id", ""),
+                monday=row.get("monday", "0") == "1",
+                tuesday=row.get("tuesday", "0") == "1",
+                wednesday=row.get("wednesday", "0") == "1",
+                thursday=row.get("thursday", "0") == "1",
+                friday=row.get("friday", "0") == "1",
+                saturday=row.get("saturday", "0") == "1",
+                sunday=row.get("sunday", "0") == "1",
+                start_date=row.get("start_date", ""),
+                end_date=row.get("end_date", ""),
+            ))
+
+        for row in calendar_dates:
+            db.add(CalendarDate(
+                feed_name=self.feed.name,
+                service_id=row.get("service_id", ""),
+                date=row.get("date", ""),
+                exception_type=int(row.get("exception_type", 0)),
+            ))
 
         db.commit()
 
@@ -255,3 +282,10 @@ class GTFSCollector:
         with archive.open(path) as file_obj:
             text_file = io.TextIOWrapper(file_obj, encoding="utf-8-sig")
             return list(csv.DictReader(text_file))
+
+    @staticmethod
+    def _read_csv_optional(archive: zipfile.ZipFile, path: str) -> list[dict[str, Any]]:
+        try:
+            return GTFSCollector._read_csv(archive, path)
+        except KeyError:
+            return []
