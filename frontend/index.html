@@ -933,12 +933,12 @@ function buildEtaRow(item) {
 
   const route = document.createElement("div");
   route.className = "route-pill";
-  route.textContent = item.route_id || "—";
+  route.textContent = item.route_short_name || item.route_id || "—";
 
-  // Show headsign if available, otherwise leave blank — trip_id is internal
+  // Show headsign if available, fall back to route long name, otherwise leave blank
   const trip = document.createElement("div");
   trip.className = "eta-trip";
-  trip.textContent = item.headsign || "";
+  trip.textContent = item.headsign || item.route_long_name || "";
 
   const m = item.minutes_away;
   const minBlock = document.createElement("div");

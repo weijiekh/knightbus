@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from knightbus.config import get_settings
 from knightbus.features import build_feature_row
 from knightbus.ml import ResidualModel, load_residual_model
-from knightbus.models import CalendarDate, ModelVersion, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.models import CalendarDate, ModelVersion, Route, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.schemas import EtaItem, ModelInfoResponse, StopResponse
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters, scheduled_seconds_to_datetime
 
@@ -23,9 +23,10 @@ class ETAPredictor:
         if stop is None:
             return []
 
-        query: Select[tuple[StopTime, Trip]] = (
-            select(StopTime, Trip)
+        query: Select[tuple[StopTime, Trip, Route]] = (
+            select(StopTime, Trip, Route)
             .join(Trip, StopTime.trip_id_ref == Trip.id)
+            .outerjoin(Route, (Route.route_id == Trip.route_id) & (Route.feed_name == Trip.feed_name))
             .where(StopTime.stop_id_ref == stop.id)
             .order_by(StopTime.arrival_seconds.asc())
         )
@@ -39,10 +40,10 @@ class ETAPredictor:
         schedule_rows = db.execute(query.limit(25)).all()
         latest_updates = self._latest_trip_updates(db, stop_id)
         latest_vehicles = self._latest_vehicles(db, stop_id)
-        trip_schedule_seconds = self._trip_schedule_seconds(db, [trip.id for _, trip in schedule_rows])
+        trip_schedule_seconds = self._trip_schedule_seconds(db, [trip.id for _, trip, _ in schedule_rows])
 
         items: list[EtaItem] = []
-        for stop_time, trip in schedule_rows:
+        for stop_time, trip, route in schedule_rows:
             scheduled_arrival = scheduled_seconds_to_datetime(now, stop_time.arrival_seconds, self._service_tz)
             trip_update = latest_updates.get(trip.trip_id)
             vehicle = latest_vehicles.get(trip.trip_id)
@@ -97,6 +98,8 @@ class ETAPredictor:
                 EtaItem(
                     stop_id=stop_id,
                     route_id=trip.route_id,
+                    route_short_name=route.short_name if route else None,
+                    route_long_name=route.long_name if route else None,
                     trip_id=trip.trip_id,
                     headsign=trip.headsign,
                     vehicle_id=vehicle.vehicle_id if vehicle else (trip_update.vehicle_id if trip_update else None),

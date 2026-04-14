@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class EtaItem(BaseModel):
     stop_id: str
     route_id: str | None = None
+    route_short_name: str | None = None
+    route_long_name: str | None = None
     trip_id: str | None = None
     headsign: str | None = None
     vehicle_id: str | None = None
