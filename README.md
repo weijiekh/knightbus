@@ -216,14 +216,19 @@ If `GTFS_FEEDS` is not set, the system falls back to the legacy single-feed env 
 
 ## Frontend
 
-A single-file HTML app lives at `frontend/index.html`. It:
-- Requests the user's GPS location from the browser
-- Calls `/v1/stops/nearby` to find the 5 closest stops within 500m
-- Fetches ETAs for each stop in parallel
-- Auto-refreshes every 30 seconds
-- Shows prediction source badges: `sched` (gray) / `live` (blue) / `ml` (green)
+A single-file HTML app at `frontend/index.html`, served by the `web` (nginx) container on port 80.
 
-**To use:** edit the `API_BASE` constant at the top of the file to point to your server, then open it in a browser or serve it via nginx.
+Features:
+- GPS-based or manual place search (Nominatim/OpenStreetMap) to set location
+- Finds the 5 nearest stops within 500m
+- Fetches ETAs for each stop in parallel
+- Dark/light mode toggle, persisted in localStorage
+- Auto-refreshes every 30 seconds
+- Prediction source badges: `sched` (gray) / `live` (blue) / `ml` (green)
+
+The nginx container proxies `/v1/*` to the `api` container internally — no extra ports needed. Access at `http://<your-server>` (port 80).
+
+See `deploy/README.md` for full setup instructions.
 
 ## API endpoints
 

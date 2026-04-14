@@ -719,7 +719,8 @@ main {
 // ══════════════════════════════════════════════
 // CONFIG — change this to your EC2 address
 // ══════════════════════════════════════════════
-const API_BASE     = "http://YOUR_EC2_IP:56709";
+// API is proxied through nginx — no hostname or port needed
+const API_BASE     = "";
 const RADIUS_M     = 500;
 const LIMIT        = 5;
 const REFRESH_SECS = 30;
@@ -842,7 +843,7 @@ async function loadStops() {
   try {
     stops = await apiFetch(`/v1/stops/nearby?lat=${currentLat}&lon=${currentLon}&radius_m=${RADIUS_M}&limit=${LIMIT}`);
   } catch {
-    renderState("⚠️", "API unreachable", `Cannot connect to ${API_BASE}`);
+    renderState("⚠️", "API unreachable", "Cannot reach the API. Is the server running?");
     setStatus("api error");
     return;
   }
