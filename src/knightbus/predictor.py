@@ -15,6 +15,7 @@ class ETAPredictor:
     def __init__(self) -> None:
         settings = get_settings()
         self._ml_model: ResidualModel | None = load_residual_model(settings.model_artifact_path)
+        self._service_tz = settings.gtfs_service_tzinfo
 
     def get_stop_etas(self, db: Session, stop_id: str, route_id: str | None = None) -> list[EtaItem]:
         now = datetime.now(timezone.utc)
@@ -38,7 +39,7 @@ class ETAPredictor:
 
         items: list[EtaItem] = []
         for stop_time, trip in schedule_rows:
-            scheduled_arrival = scheduled_seconds_to_datetime(now, stop_time.arrival_seconds)
+            scheduled_arrival = scheduled_seconds_to_datetime(now, stop_time.arrival_seconds, self._service_tz)
             trip_update = latest_updates.get(trip.trip_id)
             vehicle = latest_vehicles.get(trip.trip_id)
             delay_seconds = trip_update.delay_seconds if trip_update and trip_update.delay_seconds is not None else None

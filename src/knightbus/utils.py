@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from math import asin, cos, radians, sin, sqrt
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from knightbus.models import VehicleState
 
@@ -19,12 +20,26 @@ def parse_gtfs_time_to_seconds(value: str | None) -> int | None:
     return hours * 3600 + minutes * 60 + seconds
 
 
-def scheduled_seconds_to_datetime(reference: datetime, seconds: int | None) -> datetime | None:
+def scheduled_seconds_to_datetime(
+    reference: datetime,
+    seconds: int | None,
+    tz: ZoneInfo | None = None,
+) -> datetime | None:
+    """Convert GTFS schedule seconds-since-local-midnight to an aware datetime.
+
+    GTFS times are expressed relative to the local service timezone midnight,
+    not UTC midnight. Using UTC midnight causes all ETAs to be off by the UTC
+    offset (e.g. 8 hours for Asia/Kuala_Lumpur).
+    """
     if seconds is None:
         return None
 
-    day_start = reference.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    return day_start + timedelta(seconds=seconds)
+    service_tz = tz or ZoneInfo("Asia/Kuala_Lumpur")
+    local_now = reference.astimezone(service_tz)
+    # Midnight in the local service timezone
+    local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_dt = local_midnight + timedelta(seconds=seconds)
+    return local_dt.astimezone(timezone.utc)
 
 
 def haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
