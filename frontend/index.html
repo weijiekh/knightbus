@@ -933,7 +933,10 @@ function buildEtaRow(item) {
 
   const route = document.createElement("div");
   route.className = "route-pill";
-  route.textContent = item.route_short_name || item.route_id || "—";
+  const routeLabel = item.route_short_name ||
+    (item.route_long_name && item.route_long_name.length <= 10 ? item.route_long_name : null) ||
+    item.route_id || "—";
+  route.textContent = routeLabel;
 
   // Show headsign if available, fall back to route long name, otherwise leave blank
   const trip = document.createElement("div");
