@@ -909,7 +909,11 @@ function buildCard(stop, data) {
   const list = document.createElement("div");
   list.className = "eta-list";
 
-  const items = data?.items || [];
+  const now = data?.generated_at ? new Date(data.generated_at) : new Date();
+  const items = (data?.items || []).filter(item => {
+    if (!item.predicted_arrival_time) return true;
+    return new Date(item.predicted_arrival_time) >= now;
+  });
   if (items.length === 0) {
     const empty = document.createElement("div");
     empty.className = "no-etas";
@@ -939,12 +943,12 @@ function buildEtaRow(item) {
   const m = item.minutes_away;
   const minBlock = document.createElement("div");
   minBlock.className = "eta-min-block" +
-    (m === 0 ? " now" : m != null && m <= 2 ? " arriving" : m != null && m <= 5 ? " soon" : "");
+    (m === 0 ? " arriving" : m != null && m <= 2 ? " arriving" : m != null && m <= 5 ? " soon" : "");
 
   if (m == null) {
     minBlock.innerHTML = `<span class="eta-min-num">—</span>`;
   } else if (m === 0) {
-    minBlock.innerHTML = `<span class="eta-min-num">now</span>`;
+    minBlock.innerHTML = `<span class="eta-min-num">arriving</span>`;
   } else {
     minBlock.innerHTML = `<span class="eta-min-num">${m}</span><span class="eta-min-unit">min</span>`;
   }
@@ -1048,8 +1052,8 @@ function srcClass(src) {
 }
 function srcLabel(src) {
   if (src === "ml_residual") return "ml";
-  if (src === "heuristic")   return "live";
-  return "sched";
+  if (src === "heuristic")   return "realtime";
+  return "scheduled";
 }
 
 function getLocation() {
