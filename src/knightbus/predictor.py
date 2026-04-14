@@ -7,8 +7,8 @@ from knightbus.config import get_settings
 from knightbus.features import build_feature_row
 from knightbus.ml import ResidualModel, load_residual_model
 from knightbus.models import ModelVersion, Stop, StopTime, Trip, TripUpdateState, VehicleState
-from knightbus.schemas import EtaItem, ModelInfoResponse
-from knightbus.utils import delay_from_vehicle_progress, scheduled_seconds_to_datetime
+from knightbus.schemas import EtaItem, ModelInfoResponse, StopResponse
+from knightbus.utils import delay_from_vehicle_progress, haversine_meters, scheduled_seconds_to_datetime
 
 
 class ETAPredictor:
@@ -113,6 +113,24 @@ class ETAPredictor:
             .limit(100)
         )
         return list(db.execute(query).scalars().all())
+
+    def get_nearby_stops(
+        self, db: Session, lat: float, lon: float, radius_m: float = 500.0, limit: int = 5
+    ) -> list[StopResponse]:
+        stops = db.execute(select(Stop).where(Stop.lat.is_not(None), Stop.lon.is_not(None))).scalars().all()
+        results = []
+        for stop in stops:
+            dist = haversine_meters(lat, lon, stop.lat, stop.lon)  # type: ignore[arg-type]
+            if dist <= radius_m:
+                results.append(StopResponse(
+                    stop_id=stop.stop_id,
+                    name=stop.name,
+                    lat=stop.lat,
+                    lon=stop.lon,
+                    distance_m=round(dist, 1),
+                ))
+        results.sort(key=lambda s: s.distance_m or 0)
+        return results[:limit]
 
     def current_model_info(self, db: Session) -> ModelInfoResponse:
         version = db.execute(select(ModelVersion).order_by(desc(ModelVersion.created_at)).limit(1)).scalars().first()

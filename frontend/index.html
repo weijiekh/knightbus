@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knightbus — Live Bus ETAs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Figtree:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════
+   CONFIG — edit API_BASE in the <script> below
+   ══════════════════════════════════════════════ */
+
+/* ── DARK THEME ── */
+[data-theme="dark"] {
+  --bg:           #0c0c10;
+  --bg2:          #111116;
+  --surface:      #16161d;
+  --surface2:     #1c1c26;
+  --border:       #222230;
+  --border2:      #2a2a3a;
+  --text:         #ededf5;
+  --text2:        #9494b0;
+  --muted:        #4a4a64;
+  --accent:       #5ecb3e;
+  --accent-dim:   rgba(94,203,62,0.13);
+  --red:          #f05a6a;
+  --red-dim:      rgba(240,90,106,0.12);
+  --blue:         #5b9cf6;
+  --blue-dim:     rgba(91,156,246,0.12);
+  --green:        #34d399;
+  --green-dim:    rgba(52,211,153,0.12);
+  --shadow:       0 4px 24px rgba(0,0,0,0.4);
+  --header-blur:  rgba(12,12,16,0.92);
+}
+
+/* ── LIGHT THEME ── */
+[data-theme="light"] {
+  --bg:           #f7f5f0;
+  --bg2:          #f0ede6;
+  --surface:      #ffffff;
+  --surface2:     #f7f5f0;
+  --border:       #e4dfd5;
+  --border2:      #d8d2c8;
+  --text:         #1a1814;
+  --text2:        #6b6459;
+  --muted:        #a09890;
+  --accent:       #2e9e10;
+  --accent-dim:   rgba(46,158,16,0.10);
+  --red:          #d93050;
+  --red-dim:      rgba(217,48,80,0.10);
+  --blue:         #2563eb;
+  --blue-dim:     rgba(37,99,235,0.10);
+  --green:        #059669;
+  --green-dim:    rgba(5,150,105,0.10);
+  --shadow:       0 4px 24px rgba(0,0,0,0.08);
+  --header-blur:  rgba(247,245,240,0.94);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Figtree', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  padding-bottom: 48px;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.25s, color 0.25s;
+}
+
+/* ══════════════════════════════════════════════
+   HEADER
+   ══════════════════════════════════════════════ */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--header-blur);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ── LOGO ── */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.logo-wordmark {
+  font-family: 'Syne', sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1;
+}
+
+.logo-wordmark em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+/* ── HEADER ACTIONS ── */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.icon-btn svg { width: 16px; height: 16px; }
+
+/* ══════════════════════════════════════════════
+   SEARCH BAR
+   ══════════════════════════════════════════════ */
+.search-section {
+  max-width: 580px;
+  margin: 0 auto;
+  padding: 14px 16px 0;
+}
+
+.search-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-field {
+  position: relative;
+  flex: 1;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+  width: 15px;
+  height: 15px;
+}
+
+#search-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 36px 0 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'Figtree', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+#search-input::placeholder { color: var(--muted); }
+
+#search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--muted);
+  color: var(--bg);
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.search-clear:hover { background: var(--text2); }
+.search-clear.visible { display: flex; }
+
+.gps-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.gps-btn:hover, .gps-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.gps-btn svg { width: 13px; height: 13px; }
+
+/* ── LOCATION CHIP ── */
+.location-chip {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 10px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(240,180,41,0.25);
+  border-radius: 20px;
+  width: fit-content;
+}
+
+.location-chip.visible { display: flex; }
+
+.location-chip svg { width: 11px; height: 11px; color: var(--accent); flex-shrink: 0; }
+
+.location-chip-text {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ══════════════════════════════════════════════
+   MAIN CONTENT
+   ══════════════════════════════════════════════ */
+main {
+  max-width: 580px;
+  margin: 0 auto;
+  padding: 14px 16px 0;
+}
+
+/* ── STATUS LINE ── */
+.status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  min-height: 20px;
+}
+
+#status-text {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+#refresh-btn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#refresh-btn:hover { color: var(--accent); background: var(--accent-dim); }
+
+#refresh-btn svg { width: 11px; height: 11px; }
+
+/* ══════════════════════════════════════════════
+   STATE SCREENS
+   ══════════════════════════════════════════════ */
+.state-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 55dvh;
+  text-align: center;
+  gap: 10px;
+  padding: 32px 24px;
+}
+
+.state-icon-wrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  font-size: 26px;
+}
+
+.state-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.state-sub {
+  font-size: 13px;
+  color: var(--text2);
+  max-width: 260px;
+  line-height: 1.65;
+}
+
+/* ── SPINNER ── */
+.spinner-wrap {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 8px;
+}
+
+.spinner-track {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+}
+
+.spinner-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ══════════════════════════════════════════════
+   STOP CARDS
+   ══════════════════════════════════════════════ */
+.cards-container { display: flex; flex-direction: column; gap: 10px; }
+
+.stop-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  animation: slideUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  border-left: 3px solid var(--accent);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.stop-card:nth-child(2) { border-left-color: var(--blue); }
+.stop-card:nth-child(3) { border-left-color: var(--green); }
+.stop-card:nth-child(4) { border-left-color: var(--red); }
+.stop-card:nth-child(5) { border-left-color: var(--text2); }
+
+.stop-card:hover { box-shadow: var(--shadow), 0 0 0 1px var(--border2); }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── STOP HEADER ── */
+.stop-header {
+  padding: 11px 14px 9px 13px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stop-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--surface2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stop-icon svg { width: 13px; height: 13px; color: var(--text2); }
+
+.stop-info { flex: 1; min-width: 0; }
+
+.stop-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.stop-id-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.stop-dist {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 3px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── ETA LIST ── */
+.eta-list { padding: 4px 0; }
+
+.eta-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 13px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.eta-row:last-child { border-bottom: none; }
+.eta-row:hover { background: var(--surface2); }
+
+.route-pill {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 6px;
+  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.stop-card:nth-child(2) .route-pill { color: var(--blue);  background: var(--blue-dim); }
+.stop-card:nth-child(3) .route-pill { color: var(--green); background: var(--green-dim); }
+.stop-card:nth-child(4) .route-pill { color: var(--red);   background: var(--red-dim); }
+
+.eta-trip {
+  font-size: 12px;
+  color: var(--text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eta-min-block {
+  text-align: right;
+  line-height: 1;
+}
+
+.eta-min-num {
+  font-family: 'Syne', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+}
+
+.eta-min-unit {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  display: block;
+  text-align: right;
+  margin-top: -1px;
+}
+
+.eta-min-block.arriving .eta-min-num { color: var(--green); }
+.eta-min-block.soon     .eta-min-num { color: var(--accent); }
+.eta-min-block.now      .eta-min-num { font-size: 16px; color: var(--green); }
+
+.meta-col { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+
+.src-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.src-schedule  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+.src-heuristic { background: var(--blue-dim);  color: var(--blue); }
+.src-ml        { background: var(--green-dim); color: var(--green); }
+
+.delay-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 8px;
+  color: var(--red);
+  background: var(--red-dim);
+  padding: 2px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* ── NO ETAS ── */
+.no-etas {
+  padding: 16px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ══════════════════════════════════════════════
+   COUNTDOWN BAR
+   ══════════════════════════════════════════════ */
+#countdown-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--border);
+  z-index: 200;
+}
+
+#countdown-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 1s linear;
+  border-radius: 0 2px 2px 0;
+}
+
+#countdown-fill.pulse {
+  animation: barPulse 0.5s ease infinite;
+}
+
+@keyframes barPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ══════════════════════════════════════════════
+   THEME TOGGLE ICON
+   ══════════════════════════════════════════════ */
+.sun-icon  { display: none; }
+.moon-icon { display: block; }
+[data-theme="light"] .sun-icon  { display: block; }
+[data-theme="light"] .moon-icon { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ══════════ HEADER ══════════ -->
+<header>
+  <a class="logo" href="#">
+    <!-- Bus icon: bold side-profile with destination board -->
+    <svg class="logo-icon" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- Green background pill -->
+      <rect width="36" height="36" rx="10" fill="var(--accent)"/>
+      <!-- Bus body — wide, squat, rounded -->
+      <rect x="4" y="11" width="28" height="16" rx="3" fill="#0c1a08"/>
+      <!-- Windshield band (front face cutout, left side) -->
+      <rect x="4" y="13" width="4" height="8" rx="1" fill="var(--accent)" opacity="0.25"/>
+      <!-- Destination board strip on top -->
+      <rect x="6" y="9" width="18" height="4" rx="1.5" fill="#0c1a08"/>
+      <rect x="7.5" y="10" width="10" height="2" rx="0.8" fill="var(--accent)" opacity="0.7"/>
+      <!-- Bumper / grille front -->
+      <rect x="4" y="21" width="3" height="3" rx="0.8" fill="var(--accent)" opacity="0.4"/>
+      <!-- Window strip — bright green panels -->
+      <rect x="9"  y="13" width="5" height="4.5" rx="1" fill="var(--accent)" opacity="0.9"/>
+      <rect x="16" y="13" width="5" height="4.5" rx="1" fill="var(--accent)" opacity="0.9"/>
+      <rect x="23" y="13" width="5" height="4.5" rx="1" fill="var(--accent)" opacity="0.9"/>
+      <!-- Door (rear) -->
+      <rect x="26" y="18" width="4" height="7" rx="1" fill="var(--accent)" opacity="0.3"/>
+      <!-- Waistline stripe -->
+      <rect x="4" y="18.5" width="28" height="1" fill="var(--accent)" opacity="0.2"/>
+      <!-- Wheels -->
+      <circle cx="10"  cy="27" r="3.5" fill="#0c1a08" stroke="var(--accent)" stroke-width="1.5"/>
+      <circle cx="10"  cy="27" r="1.2" fill="var(--accent)"/>
+      <circle cx="24"  cy="27" r="3.5" fill="#0c1a08" stroke="var(--accent)" stroke-width="1.5"/>
+      <circle cx="24"  cy="27" r="1.2" fill="var(--accent)"/>
+      <!-- Headlight -->
+      <rect x="5" y="14.5" width="2" height="1.5" rx="0.5" fill="white" opacity="0.85"/>
+    </svg>
+    <span class="logo-wordmark">Knight<em>bus</em></span>
+  </a>
+
+  <div class="header-actions">
+    <button class="icon-btn" id="theme-btn" title="Toggle theme" onclick="toggleTheme()">
+      <!-- Moon icon (dark mode) -->
+      <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <!-- Sun icon (light mode) -->
+      <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="5"/>
+        <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+        <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<!-- ══════════ SEARCH ══════════ -->
+<div class="search-section">
+  <div class="search-wrap">
+    <div class="search-field">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input id="search-input" type="text" placeholder="Search place… e.g. KLCC, Bukit Bintang"
+        autocomplete="off" spellcheck="false"
+        oninput="onSearchInput(this.value)"
+        onkeydown="if(event.key==='Enter') doSearch()"/>
+      <button class="search-clear" id="search-clear" title="Clear" onclick="clearSearch()">×</button>
+    </div>
+    <button class="gps-btn" id="gps-btn" title="Use my GPS location" onclick="useGPS()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+        <path d="M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
+      </svg>
+      GPS
+    </button>
+  </div>
+
+  <div class="location-chip" id="location-chip">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+    </svg>
+    <span class="location-chip-text" id="location-chip-text"></span>
+  </div>
+</div>
+
+<!-- ══════════ MAIN ══════════ -->
+<main>
+  <div class="status-line">
+    <span id="status-text">—</span>
+    <button id="refresh-btn" onclick="doRefresh()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </svg>
+      refresh
+    </button>
+  </div>
+  <div id="main-content"></div>
+</main>
+
+<div id="countdown-bar"><div id="countdown-fill" style="width:100%"></div></div>
+
+<script>
+// ══════════════════════════════════════════════
+// CONFIG — change this to your EC2 address
+// ══════════════════════════════════════════════
+const API_BASE     = "http://YOUR_EC2_IP:56709";
+const RADIUS_M     = 500;
+const LIMIT        = 5;
+const REFRESH_SECS = 30;
+
+// ══════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════
+let countdownTimer = null;
+let countdownSecs  = REFRESH_SECS;
+let currentLat     = null;
+let currentLon     = null;
+let locationLabel  = null;
+let usingGPS       = false;
+
+// ══════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════
+window.addEventListener("DOMContentLoaded", () => {
+  applyTheme(localStorage.getItem("kb-theme") || "dark");
+  useGPS();
+});
+
+// ══════════════════════════════════════════════
+// THEME
+// ══════════════════════════════════════════════
+function toggleTheme() {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  applyTheme(next);
+  localStorage.setItem("kb-theme", next);
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+}
+
+// ══════════════════════════════════════════════
+// LOCATION: GPS
+// ══════════════════════════════════════════════
+async function useGPS() {
+  document.getElementById("gps-btn").classList.add("active");
+  setStatus("requesting GPS…");
+  renderState("spinner", "Finding your location…", "");
+
+  let pos;
+  try {
+    pos = await getLocation();
+  } catch {
+    document.getElementById("gps-btn").classList.remove("active");
+    renderState("📍", "Location denied", "Enable location access in your browser and tap GPS again.");
+    setStatus("location denied");
+    return;
+  }
+
+  usingGPS = true;
+  currentLat = pos.coords.latitude;
+  currentLon = pos.coords.longitude;
+  locationLabel = `GPS · ${currentLat.toFixed(4)}, ${currentLon.toFixed(4)}`;
+  showLocationChip(locationLabel);
+  await loadStops();
+}
+
+// ══════════════════════════════════════════════
+// LOCATION: SEARCH
+// ══════════════════════════════════════════════
+function onSearchInput(val) {
+  document.getElementById("search-clear").classList.toggle("visible", val.length > 0);
+}
+
+async function doSearch() {
+  const q = document.getElementById("search-input").value.trim();
+  if (!q) return;
+
+  document.getElementById("gps-btn").classList.remove("active");
+  usingGPS = false;
+  clearTimers();
+  setStatus("searching…");
+  renderState("spinner", `Searching "${q}"…`, "");
+
+  let result;
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,
+      { headers: { "User-Agent": "Knightbus/1.0" } }
+    );
+    const data = await res.json();
+    result = data[0];
+  } catch {
+    renderState("⚠️", "Search failed", "Could not reach the geocoding service. Check your connection.");
+    setStatus("geocode error");
+    return;
+  }
+
+  if (!result) {
+    renderState("🔍", "Place not found", `No results for "${q}". Try a different search term.`);
+    setStatus("not found");
+    return;
+  }
+
+  currentLat = parseFloat(result.lat);
+  currentLon = parseFloat(result.lon);
+  locationLabel = result.display_name.split(",").slice(0, 2).join(",").trim();
+  showLocationChip(locationLabel);
+  await loadStops();
+}
+
+function clearSearch() {
+  document.getElementById("search-input").value = "";
+  document.getElementById("search-clear").classList.remove("visible");
+  hideLocationChip();
+  useGPS();
+}
+
+// ══════════════════════════════════════════════
+// LOAD STOPS + ETAs
+// ══════════════════════════════════════════════
+async function loadStops() {
+  setStatus("finding nearby stops…");
+  if (!currentLat || !currentLon) return;
+
+  let stops;
+  try {
+    stops = await apiFetch(`/v1/stops/nearby?lat=${currentLat}&lon=${currentLon}&radius_m=${RADIUS_M}&limit=${LIMIT}`);
+  } catch {
+    renderState("⚠️", "API unreachable", `Cannot connect to ${API_BASE}`);
+    setStatus("api error");
+    return;
+  }
+
+  if (!stops || stops.length === 0) {
+    renderState("🚌", "No stops nearby", `No bus stops within ${RADIUS_M}m. Try searching a different location.`);
+    setStatus("no stops nearby");
+    scheduleRefresh();
+    return;
+  }
+
+  const etaResults = await Promise.allSettled(
+    stops.map(s => apiFetch(`/v1/stops/${encodeURIComponent(s.stop_id)}/etas`).catch(() => null))
+  );
+
+  const container = document.createElement("div");
+  container.className = "cards-container";
+  stops.forEach((stop, i) => {
+    const eta = etaResults[i].status === "fulfilled" ? etaResults[i].value : null;
+    const card = buildCard(stop, eta);
+    card.style.animationDelay = `${i * 55}ms`;
+    container.appendChild(card);
+  });
+
+  const content = document.getElementById("main-content");
+  content.innerHTML = "";
+  content.appendChild(container);
+
+  setStatus(`updated ${timeNow()}`);
+  scheduleRefresh();
+}
+
+async function doRefresh() {
+  clearTimers();
+  await loadStops();
+}
+
+// ══════════════════════════════════════════════
+// CARD BUILDER
+// ══════════════════════════════════════════════
+function buildCard(stop, data) {
+  const card = document.createElement("div");
+  card.className = "stop-card";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "stop-header";
+  header.innerHTML = `
+    <div class="stop-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
+        <line x1="12" y1="12" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+      </svg>
+    </div>
+    <div class="stop-info">
+      <div class="stop-name">${esc(stop.name || stop.stop_id)}</div>
+      <div class="stop-id-label">${esc(stop.stop_id)}</div>
+    </div>
+    ${stop.distance_m != null ? `<div class="stop-dist">${Math.round(stop.distance_m)}m</div>` : ""}
+  `;
+  card.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "eta-list";
+
+  const items = data?.items || [];
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "no-etas";
+    empty.textContent = data === null ? "unavailable" : "no arrivals scheduled";
+    list.appendChild(empty);
+  } else {
+    items.slice(0, 5).forEach(item => list.appendChild(buildEtaRow(item)));
+  }
+
+  card.appendChild(list);
+  return card;
+}
+
+function buildEtaRow(item) {
+  const row = document.createElement("div");
+  row.className = "eta-row";
+
+  const route = document.createElement("div");
+  route.className = "route-pill";
+  route.textContent = item.route_id || "—";
+
+  const trip = document.createElement("div");
+  trip.className = "eta-trip";
+  trip.textContent = item.trip_id || "";
+
+  const m = item.minutes_away;
+  const minBlock = document.createElement("div");
+  minBlock.className = "eta-min-block" +
+    (m === 0 ? " now" : m != null && m <= 2 ? " arriving" : m != null && m <= 5 ? " soon" : "");
+
+  if (m == null) {
+    minBlock.innerHTML = `<span class="eta-min-num">—</span>`;
+  } else if (m === 0) {
+    minBlock.innerHTML = `<span class="eta-min-num">now</span>`;
+  } else {
+    minBlock.innerHTML = `<span class="eta-min-num">${m}</span><span class="eta-min-unit">min</span>`;
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "meta-col";
+
+  const badge = document.createElement("span");
+  badge.className = "src-badge " + srcClass(item.prediction_source);
+  badge.textContent = srcLabel(item.prediction_source);
+  meta.appendChild(badge);
+
+  if (item.delay_seconds != null && item.delay_seconds > 60) {
+    const delay = document.createElement("span");
+    delay.className = "delay-badge";
+    delay.textContent = `+${Math.round(item.delay_seconds / 60)}m late`;
+    meta.appendChild(delay);
+  }
+
+  row.appendChild(route);
+  row.appendChild(trip);
+  row.appendChild(minBlock);
+  row.appendChild(meta);
+  return row;
+}
+
+// ══════════════════════════════════════════════
+// STATE SCREEN
+// ══════════════════════════════════════════════
+function renderState(iconOrSpinner, title, sub) {
+  const el = document.createElement("div");
+  el.className = "state-screen";
+  if (iconOrSpinner === "spinner") {
+    el.innerHTML = `
+      <div class="spinner-wrap">
+        <div class="spinner-track"></div>
+        <div class="spinner-fill"></div>
+      </div>
+      <div class="state-title">${esc(title)}</div>
+      ${sub ? `<div class="state-sub">${esc(sub)}</div>` : ""}
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="state-icon-wrap">${iconOrSpinner}</div>
+      <div class="state-title">${esc(title)}</div>
+      ${sub ? `<div class="state-sub">${esc(sub)}</div>` : ""}
+    `;
+  }
+  const content = document.getElementById("main-content");
+  content.innerHTML = "";
+  content.appendChild(el);
+}
+
+// ══════════════════════════════════════════════
+// LOCATION CHIP
+// ══════════════════════════════════════════════
+function showLocationChip(label) {
+  document.getElementById("location-chip-text").textContent = label;
+  document.getElementById("location-chip").classList.add("visible");
+}
+function hideLocationChip() {
+  document.getElementById("location-chip").classList.remove("visible");
+}
+
+// ══════════════════════════════════════════════
+// COUNTDOWN
+// ══════════════════════════════════════════════
+function scheduleRefresh() {
+  countdownSecs = REFRESH_SECS;
+  tickCountdown();
+  countdownTimer = setInterval(() => {
+    countdownSecs--;
+    tickCountdown();
+    if (countdownSecs <= 0) { clearTimers(); loadStops(); }
+  }, 1000);
+}
+
+function tickCountdown() {
+  const fill = document.getElementById("countdown-fill");
+  const pct = countdownSecs / REFRESH_SECS * 100;
+  fill.style.width = pct + "%";
+  fill.classList.toggle("pulse", countdownSecs <= 5);
+}
+
+function clearTimers() {
+  clearInterval(countdownTimer);
+  countdownTimer = null;
+  countdownSecs = REFRESH_SECS;
+  tickCountdown();
+}
+
+// ══════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════
+function srcClass(src) {
+  if (src === "ml_residual") return "src-ml";
+  if (src === "heuristic")   return "src-heuristic";
+  return "src-schedule";
+}
+function srcLabel(src) {
+  if (src === "ml_residual") return "ml";
+  if (src === "heuristic")   return "live";
+  return "sched";
+}
+
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("unavailable")); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true, timeout: 10000, maximumAge: 20000,
+    });
+  });
+}
+
+async function apiFetch(path) {
+  const res = await fetch(API_BASE + path);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function setStatus(msg) { document.getElementById("status-text").textContent = msg; }
+
+function timeNow() {
+  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function esc(str) {
+  return String(str)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+</script>
+</body>
+</html>

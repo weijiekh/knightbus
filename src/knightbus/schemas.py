@@ -33,6 +33,14 @@ class VehicleResponse(BaseModel):
     observed_at: datetime
 
 
+class StopResponse(BaseModel):
+    stop_id: str
+    name: str | None = None
+    lat: float | None = None
+    lon: float | None = None
+    distance_m: float | None = None
+
+
 class HealthResponse(BaseModel):
     status: str
     environment: str

@@ -214,6 +214,27 @@ GTFS_FEEDS=[{"name":"my-city-bus","static_url":"https://example.com/gtfs-static.
 
 If `GTFS_FEEDS` is not set, the system falls back to the legacy single-feed env vars (`GTFS_STATIC_URL`, `GTFS_VEHICLE_POSITIONS_URL`, `GTFS_TRIP_UPDATES_URL`) as a feed named `"default"`.
 
+## Frontend
+
+A single-file HTML app lives at `frontend/index.html`. It:
+- Requests the user's GPS location from the browser
+- Calls `/v1/stops/nearby` to find the 5 closest stops within 500m
+- Fetches ETAs for each stop in parallel
+- Auto-refreshes every 30 seconds
+- Shows prediction source badges: `sched` (gray) / `live` (blue) / `ml` (green)
+
+**To use:** edit the `API_BASE` constant at the top of the file to point to your server, then open it in a browser or serve it via nginx.
+
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/health` | Health check |
+| GET | `/v1/stops/nearby?lat=&lon=&radius_m=&limit=` | Stops near a GPS coordinate, sorted by distance |
+| GET | `/v1/stops/{stop_id}/etas` | ETAs for a specific stop |
+| GET | `/v1/routes/{route_id}/vehicles` | Live vehicle positions for a route |
+| GET | `/v1/models/current` | Current ML model version and status |
+
 ## Prasarana feed defaults
 
 The default `.env.example` configures three Prasarana feeds:

@@ -8,7 +8,7 @@ from knightbus.config import get_settings
 from knightbus.db import get_db
 from knightbus.logging import configure_logging
 from knightbus.predictor import ETAPredictor
-from knightbus.schemas import HealthResponse, StopEtaResponse, VehicleResponse
+from knightbus.schemas import HealthResponse, StopEtaResponse, StopResponse, VehicleResponse
 
 configure_logging()
 
@@ -20,6 +20,17 @@ predictor = ETAPredictor()
 def health() -> HealthResponse:
     settings = get_settings()
     return HealthResponse(status="ok", environment=settings.app_env)
+
+
+@app.get("/v1/stops/nearby", response_model=list[StopResponse])
+def nearby_stops(
+    lat: float = Query(..., description="User latitude"),
+    lon: float = Query(..., description="User longitude"),
+    radius_m: float = Query(default=500.0, description="Search radius in metres"),
+    limit: int = Query(default=5, ge=1, le=20),
+    db: Session = Depends(get_db),
+) -> list[StopResponse]:
+    return predictor.get_nearby_stops(db, lat=lat, lon=lon, radius_m=radius_m, limit=limit)
 
 
 @app.get("/v1/stops/{stop_id}/etas", response_model=StopEtaResponse)
