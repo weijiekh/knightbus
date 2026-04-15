@@ -427,17 +427,18 @@ main {
 }
 
 .stop-icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: var(--surface2);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent);
+  opacity: 0.85;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 
-.stop-icon svg { width: 13px; height: 13px; color: var(--text2); }
+.stop-icon svg { width: 15px; height: 15px; color: var(--bg); }
 
 .stop-info { flex: 1; min-width: 0; }
 
@@ -897,8 +898,14 @@ function buildCard(stop, data) {
   header.innerHTML = `
     <div class="stop-icon">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
-        <line x1="12" y1="12" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+        <!-- Sign panel -->
+        <rect x="4" y="2" width="16" height="10" rx="2"/>
+        <!-- Bus symbol on panel -->
+        <path d="M7 6h10M7 8.5h10" stroke-width="1.2" opacity="0.7"/>
+        <!-- Pole -->
+        <line x1="12" y1="12" x2="12" y2="22"/>
+        <!-- Feet/base -->
+        <line x1="9" y1="22" x2="15" y2="22"/>
       </svg>
     </div>
     <div class="stop-info">
