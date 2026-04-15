@@ -564,6 +564,10 @@ main {
   border-radius: 4px;
   white-space: nowrap;
 }
+.delay-badge.early {
+  color: var(--green);
+  background: var(--green-dim);
+}
 
 /* ── NO ETAS ── */
 .no-etas {
@@ -964,13 +968,21 @@ function buildEtaRow(item) {
   badge.textContent = srcLabel(item.prediction_source);
   meta.appendChild(badge);
 
-  // Only show delay if it's between 1 and 60 minutes — beyond that is likely stale/bad data
+  // Show delay if meaningfully late (1–30 min) or early (5–30 min) — outside that is noise or bad data
   const delaySec = item.delay_seconds;
-  if (delaySec != null && delaySec > 60 && delaySec <= 3600) {
-    const delay = document.createElement("span");
-    delay.className = "delay-badge";
-    delay.textContent = `+${Math.round(delaySec / 60)}m late`;
-    meta.appendChild(delay);
+  if (delaySec != null) {
+    const delayMin = Math.round(delaySec / 60);
+    if (delayMin > 1 && delayMin <= 30) {
+      const delay = document.createElement("span");
+      delay.className = "delay-badge";
+      delay.textContent = `+${delayMin}m late`;
+      meta.appendChild(delay);
+    } else if (delayMin < -5 && delayMin >= -30) {
+      const delay = document.createElement("span");
+      delay.className = "delay-badge early";
+      delay.textContent = `${delayMin}m early`;
+      meta.appendChild(delay);
+    }
   }
 
   row.appendChild(route);
