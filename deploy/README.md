@@ -137,6 +137,95 @@ docker compose exec db psql -U postgres -d knightbus \
 
 ---
 
+## HTTPS via Cloudflare Tunnel (free, no domain required)
+
+Browsers block GPS/geolocation on plain HTTP. Cloudflare Tunnel gives you an HTTPS URL instantly, for free, without a domain or SSL cert.
+
+### One-time setup on the EC2 instance
+
+**1. Install `cloudflared`:**
+
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+```
+
+**2. Start a quick tunnel (no login needed):**
+
+```bash
+cloudflared tunnel --url http://localhost:80
+```
+
+Cloudflare will print a URL like `https://random-words.trycloudflare.com`. Open that on your phone — GPS will work.
+
+> The URL changes every time you restart the tunnel. For a permanent URL, follow the steps below.
+
+---
+
+### Permanent tunnel with a fixed URL (requires free Cloudflare account)
+
+**1. Log in:**
+
+```bash
+cloudflared tunnel login
+```
+
+This opens a browser link — paste it on your local machine, authenticate, and the credentials file is saved to `~/.cloudflared/cert.pem` on the EC2.
+
+**2. Create a named tunnel:**
+
+```bash
+cloudflared tunnel create knightbus
+```
+
+Note the tunnel ID printed (a UUID like `abc123...`).
+
+**3. Create the config file at `~/.cloudflared/config.yml`:**
+
+```yaml
+tunnel: <your-tunnel-id>
+credentials-file: /root/.cloudflared/<your-tunnel-id>.json
+
+ingress:
+  - hostname: bus.yourdomain.com   # or any subdomain you own on Cloudflare
+    service: http://localhost:80
+  - service: http_status:404
+```
+
+**4. Route DNS (if you have a domain on Cloudflare):**
+
+```bash
+cloudflared tunnel route dns knightbus bus.yourdomain.com
+```
+
+**5. Run the tunnel:**
+
+```bash
+cloudflared tunnel run knightbus
+```
+
+**6. Run as a systemd service so it survives reboots:**
+
+```bash
+cloudflared service install
+systemctl enable cloudflared
+systemctl start cloudflared
+```
+
+---
+
+### Security group update
+
+When using Cloudflare Tunnel, traffic comes in via the tunnel — not directly on port 80. You can optionally **remove the port 80 inbound rule** from your EC2 security group to prevent direct HTTP access, and only allow the tunnel.
+
+| Port | Protocol | Source       | Purpose        |
+|------|----------|--------------|----------------|
+| 22   | TCP      | Your IP only | SSH            |
+| 80   | TCP      | Remove this  | No longer needed if tunnel-only |
+
+---
+
 ## When you get a domain
 
 1. Point your domain's A record to the EC2 public IP
