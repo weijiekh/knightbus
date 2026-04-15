@@ -762,10 +762,17 @@ async function useGPS() {
   let pos;
   try {
     pos = await getLocation();
-  } catch {
+  } catch (err) {
     document.getElementById("gps-btn").classList.remove("active");
-    renderState("📍", "Location denied", "Enable location access in your browser and tap GPS again.");
-    setStatus("location denied");
+    const isTimeout = err?.code === 3;
+    const isDenied = err?.code === 1;
+    const msg = isDenied
+      ? "Enable location access in your browser and tap GPS again."
+      : isTimeout
+      ? "Location request timed out. Try again."
+      : "Location unavailable. Try again or search manually.";
+    renderState("📍", "Location error", msg);
+    setStatus("location error");
     return;
   }
 
