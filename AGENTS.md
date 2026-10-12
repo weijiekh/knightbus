@@ -50,6 +50,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - New env vars: `TRAINING_IN_WORKER` (default true), `REALTIME_RETENTION_DAYS` (14), `RAW_SNAPSHOT_RETENTION_DAYS` (2), `POSTGRES_PASSWORD`, `KNIGHTBUS_DB_PORT`, `KNIGHTBUS_API_PORT`
 - Legacy EC2: `deploy/README.md` and `deploy/ec2-user-data.sh` still work with `docker compose --profile web`
 - Update a running instance with `deploy/update.sh`
+- CI/CD: `.github/workflows/ci.yml` tests PRs; push to `main` builds `ghcr.io` api/worker images in Actions and deploys via `deploy/gcp/deploy.sh` as `knightbus-deploy` (never build on the VM)
 
 ## Code conventions
 
