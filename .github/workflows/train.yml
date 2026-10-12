@@ -1,0 +1,58 @@
+name: train
+
+on:
+  schedule:
+    - cron: "0 19 * * 0" # Monday 03:00 Asia/Kuala_Lumpur
+  workflow_dispatch:
+
+concurrency:
+  group: train
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --extra ml --frozen
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.VM_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Open DB tunnel
+        run: |
+          set -euo pipefail
+          ssh -f -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+            -L 15432:127.0.0.1:5433 "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}"
+          for _ in $(seq 1 10); do nc -z 127.0.0.1 15432 && exit 0; sleep 1; done
+          echo "tunnel did not come up" >&2; exit 1
+
+      - name: Train
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:${{ secrets.DB_PASSWORD }}@127.0.0.1:15432/knightbus
+          MODEL_ARTIFACT_PATH: artifacts/eta_lgbm.pkl
+        run: uv run python -m knightbus.training
+
+      - name: Upload artifact to VM
+        run: |
+          set -euo pipefail
+          if [ ! -s artifacts/eta_lgbm.pkl ]; then
+            echo "No model produced (insufficient/stale data); live model unchanged."
+            exit 0
+          fi
+          scp artifacts/eta_lgbm.pkl "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:/opt/knightbus/artifacts/eta_lgbm.pkl.tmp"
+          ssh "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
+            "mv /opt/knightbus/artifacts/eta_lgbm.pkl.tmp /opt/knightbus/artifacts/eta_lgbm.pkl"
