@@ -28,8 +28,17 @@ install -d -m 700 -o knightbus-ci -g knightbus-ci /home/knightbus-ci/.ssh
 if [ ! -e /etc/nginx/sites-enabled/knightbus ]; then
   cp "$APP_DIR/deploy/gcp/nginx-knightbus.conf" /etc/nginx/sites-available/knightbus
   ln -s /etc/nginx/sites-available/knightbus /etc/nginx/sites-enabled/knightbus
-  nginx -t
+  if ! nginx -t; then
+    # Never leave a broken site enabled on the shared nginx.
+    rm -f /etc/nginx/sites-enabled/knightbus /etc/nginx/sites-available/knightbus
+    echo "nginx -t failed; knightbus site removed, nginx untouched" >&2
+    exit 1
+  fi
   systemctl reload nginx
+fi
+
+# Independent guard so a rerun retries a failed cert.
+if [ ! -e "/etc/letsencrypt/live/$API_HOST" ]; then
   certbot --nginx -d "$API_HOST" --non-interactive --agree-tos --register-unsafely-without-email --redirect
 fi
 

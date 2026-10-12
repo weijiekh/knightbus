@@ -15,8 +15,10 @@ git pull --ff-only
 echo "Rebuilding and restarting containers..."
 docker compose $COMPOSE_ARGS up --build -d
 
-# Protect disk on small VMs: drop build cache after each build.
-docker builder prune -f
+# Opt-in: this prunes the GLOBAL build cache, including other projects' on a shared host.
+if [ "${PRUNE_BUILD_CACHE:-0}" = "1" ]; then
+  docker builder prune -f
+fi
 
 echo "Done. Running containers:"
 docker compose $COMPOSE_ARGS ps

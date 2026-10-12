@@ -53,8 +53,12 @@ curl -s http://127.0.0.1:8100/v1/health
 curl -s https://knightbus.34.123.154.175.sslip.io/v1/health
 ```
 
+`POSTGRES_PASSWORD` only applies when the Postgres volume is first initialised;
+changing it later requires `ALTER USER` inside the db.
+
 `update.sh` pulls, rebuilds (`api` with `ML_DEPS=inference`, `worker` with
-`ML_DEPS=none`), starts, and runs `docker builder prune -f` to protect disk.
+`ML_DEPS=none`), and starts. Set `PRUNE_BUILD_CACHE=1` to also run `docker builder prune -f`
+to protect disk; note it clears the build cache of ALL projects on this shared Docker host.
 Check memory with `docker stats --no-stream` and OOM kills with
 `docker inspect -f '{{.State.OOMKilled}}' knightbus-api-1`. If `api` hits its
 limit, raise it to 256m and lower `worker`, keeping the 450 MB total.
