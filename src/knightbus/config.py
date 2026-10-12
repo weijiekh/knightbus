@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     gtfs_static_refresh_hours: int = Field(default=24, alias="GTFS_STATIC_REFRESH_HOURS")
     feature_refresh_minutes: int = Field(default=5, alias="FEATURE_REFRESH_MINUTES")
     training_refresh_hours: int = Field(default=24, alias="TRAINING_REFRESH_HOURS")
+    training_in_worker: bool = Field(default=True, alias="TRAINING_IN_WORKER")
     model_artifact_path: str = Field(default="artifacts/eta_lgbm.pkl", alias="MODEL_ARTIFACT_PATH")
 
     @field_validator("gtfs_service_timezone")
