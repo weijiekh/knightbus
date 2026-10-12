@@ -29,7 +29,16 @@ This clones the repo to `/opt/knightbus`, creates `artifacts/` (writable by the
 bind mount), creates the `knightbus-ci` user, installs the nginx site
 `/etc/nginx/sites-enabled/knightbus` (`nginx -t` runs before reload) and gets a
 cert with `certbot --nginx`. Then add the CI public key to
-`/home/knightbus-ci/.ssh/authorized_keys`.
+`/home/knightbus-ci/.ssh/authorized_keys`, with key options that disable
+everything except forwarding to the loopback Postgres port:
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:5433" ssh-ed25519 AAAA... github-actions-training
+```
+
+`knightbus-ci` still has a normal shell on this shared VM: the workflow's `scp`
+and `mv` need command execution, so a forced `command=` cannot be used. The
+options above only stop agent/X11/pty use and limit port forwarding.
 
 ## 3. `.env` in `/opt/knightbus`
 

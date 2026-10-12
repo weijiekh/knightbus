@@ -15,7 +15,9 @@ if [ ! -d "$APP_DIR/.git" ]; then
 fi
 mkdir -p "$APP_DIR/artifacts"
 
-# Restricted CI user: SSH port-forward to loopback Postgres + write model artifacts.
+# CI user for training: SSH port-forward to loopback Postgres + write model artifacts.
+# It has a normal login shell (scp/mv need command execution); limit its key
+# with authorized_keys options, see deploy/gcp/README.md.
 if ! id knightbus-ci >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash knightbus-ci
 fi
