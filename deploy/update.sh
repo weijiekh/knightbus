@@ -15,5 +15,8 @@ git pull --ff-only
 echo "Rebuilding and restarting containers..."
 docker compose $COMPOSE_ARGS up --build -d
 
+# Protect disk on small VMs: drop build cache after each build.
+docker builder prune -f
+
 echo "Done. Running containers:"
 docker compose $COMPOSE_ARGS ps

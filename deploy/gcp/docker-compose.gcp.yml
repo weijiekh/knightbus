@@ -1,0 +1,40 @@
+# Shared e2-micro (krappa-haus). Usage:
+#   docker compose -f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml up -d --build
+# Set KNIGHTBUS_DB_PORT=5433 and KNIGHTBUS_API_PORT=8100 in the VM's .env.
+# mem_limit total: 128 + 192 + 128 = 448 MB (budget 450 MB).
+services:
+  db:
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=15
+      - -c
+      - effective_cache_size=128MB
+    mem_limit: 128m
+
+  api:
+    build:
+      context: .
+      args:
+        ML_DEPS: inference
+    image: knightbus-api:local
+    environment:
+      MALLOC_ARENA_MAX: "2"
+    mem_limit: 192m
+
+  worker:
+    build:
+      context: .
+      args:
+        ML_DEPS: none
+    image: knightbus-worker:local
+    environment:
+      TRAINING_IN_WORKER: "false"
+      MALLOC_ARENA_MAX: "2"
+    mem_limit: 128m
