@@ -1,5 +1,7 @@
 # Shared e2-micro (krappa-haus). Usage:
 #   docker compose -f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml up -d --build
+# CI/CD sets KNIGHTBUS_API_IMAGE / KNIGHTBUS_WORKER_IMAGE to ghcr.io images and
+# runs `pull` + `up -d --no-build`, so nothing is built on the VM.
 # Set KNIGHTBUS_DB_PORT=5433 and KNIGHTBUS_API_PORT=8100 in the VM's .env.
 # mem_limit total: 128 + 192 + 128 = 448 MB (budget 450 MB).
 services:
@@ -23,7 +25,7 @@ services:
       context: .
       args:
         ML_DEPS: inference
-    image: knightbus-api:local
+    image: ${KNIGHTBUS_API_IMAGE:-knightbus-api:local}
     environment:
       MALLOC_ARENA_MAX: "2"
     mem_limit: 192m
@@ -33,7 +35,7 @@ services:
       context: .
       args:
         ML_DEPS: none
-    image: knightbus-worker:local
+    image: ${KNIGHTBUS_WORKER_IMAGE:-knightbus-worker:local}
     environment:
       TRAINING_IN_WORKER: "false"
       MALLOC_ARENA_MAX: "2"
