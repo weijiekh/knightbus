@@ -6,11 +6,14 @@ set -euo pipefail
 APP_DIR="${1:-/opt/knightbus}"
 cd "$APP_DIR"
 
+# EC2 default; on GCP set COMPOSE_ARGS="-f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml"
+COMPOSE_ARGS="${COMPOSE_ARGS:--f docker-compose.yml --profile web}"
+
 echo "Pulling latest changes..."
 git pull --ff-only
 
 echo "Rebuilding and restarting containers..."
-docker compose up --build -d
+docker compose $COMPOSE_ARGS up --build -d
 
 echo "Done. Running containers:"
-docker compose ps
+docker compose $COMPOSE_ARGS ps

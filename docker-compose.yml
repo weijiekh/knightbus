@@ -1,18 +1,20 @@
+name: knightbus
+
 services:
   db:
-    restart: "no"
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_DB: knightbus
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${KNIGHTBUS_DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   api:
-    restart: "no"
+    restart: unless-stopped
     build: .
     env_file:
       - .env
@@ -20,18 +22,23 @@ services:
     depends_on:
       - db
     ports:
-      - "56709:56709"
+      - "127.0.0.1:${KNIGHTBUS_API_PORT:-56709}:56709"
+    volumes:
+      - ./artifacts:/app/artifacts
 
   worker:
-    restart: "no"
+    restart: unless-stopped
     build: .
     env_file:
       - .env
     command: python -m knightbus.scheduler
     depends_on:
       - db
+    volumes:
+      - ./artifacts:/app/artifacts
 
   web:
+    profiles: ["web"]
     restart: unless-stopped
     image: nginx:alpine
     ports:

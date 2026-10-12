@@ -63,7 +63,7 @@ sed -i 's/^APP_ENV=.*/APP_ENV=production/' .env
 #       --query 'Parameter.Value' --output text > .env
 
 # ---------- start services ----------
-docker compose up --build -d
+docker compose --profile web up --build -d
 
 # ---------- systemd ensures Docker (and its containers) restart on boot ----------
 # Docker is already enabled via systemctl above. Containers created with
