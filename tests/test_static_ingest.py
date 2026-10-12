@@ -2,6 +2,7 @@ import io
 import zipfile
 from datetime import datetime, timezone
 
+import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
@@ -93,3 +94,55 @@ def test_reload_replaces_and_other_feed_untouched() -> None:
     assert count(db, ServiceCalendar, "kl") == 1
     assert count(db, CalendarDate, "kl") == 2
     assert db.scalar(select(func.count()).select_from(StopTime)) == 6
+
+
+def make_payload_with(overrides: dict[str, str | None]) -> FeedPayload:
+    files = {**FILES, **overrides}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        for name, content in files.items():
+            if content is not None:
+                archive.writestr(name, content)
+    return FeedPayload(url="http://x/static.zip", fetched_at=datetime(2026, 10, 12, tzinfo=timezone.utc), payload=buf.getvalue())
+
+
+def assert_original_rows(db) -> None:
+    assert count(db, Route, "kl") == 2
+    assert count(db, Stop, "kl") == 3
+    assert count(db, Trip, "kl") == 2
+    assert count(db, ServiceCalendar, "kl") == 1
+    assert count(db, CalendarDate, "kl") == 2
+    assert db.scalar(select(func.count()).select_from(StopTime)) == 3
+
+
+def test_missing_required_file_keeps_existing_data() -> None:
+    db = build_session()
+    collector("kl").load_static_feed(db, make_payload())
+    with pytest.raises(ValueError):
+        collector("kl").load_static_feed(db, make_payload_with({"stop_times.txt": None}))
+    assert_original_rows(db)
+
+
+def test_corrupt_zip_keeps_existing_data() -> None:
+    db = build_session()
+    collector("kl").load_static_feed(db, make_payload())
+    bad = FeedPayload(url="http://x", fetched_at=datetime(2026, 10, 12, tzinfo=timezone.utc), payload=b"not a zip")
+    with pytest.raises(zipfile.BadZipFile):
+        collector("kl").load_static_feed(db, bad)
+    assert_original_rows(db)
+
+
+def test_bad_row_rolls_back_and_keeps_existing_data() -> None:
+    db = build_session()
+    collector("kl").load_static_feed(db, make_payload())
+    bad_times = FILES["stop_times.txt"].replace("08:00:00,08:00:30,S1,1", "08:00:00,08:00:30,S1,abc")
+    with pytest.raises(ValueError):
+        collector("kl").load_static_feed(db, make_payload_with({"stop_times.txt": bad_times}))
+    assert_original_rows(db)
+
+
+def test_multi_batch_inserts(monkeypatch) -> None:
+    monkeypatch.setattr("knightbus.collector.STATIC_INSERT_BATCH_SIZE", 2)
+    db = build_session()
+    collector("kl").load_static_feed(db, make_payload())
+    assert_original_rows(db)

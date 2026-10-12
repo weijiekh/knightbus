@@ -16,6 +16,7 @@ from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
 
 STOP_MATCH_RADIUS_METERS = 200.0
 STATIC_INSERT_BATCH_SIZE = 5000
+REQUIRED_STATIC_FILES = ("routes.txt", "stops.txt", "trips.txt", "stop_times.txt")
 
 
 @dataclass
@@ -70,7 +71,23 @@ class GTFSCollector:
         self.persist_raw_snapshot(db, "static", payload)
         feed_name = self.feed.name
 
-        # Delete only data for this feed
+        # Validate before deleting so a bad archive never wipes existing data.
+        with zipfile.ZipFile(io.BytesIO(payload.payload)) as archive:
+            missing = [name for name in REQUIRED_STATIC_FILES if name not in archive.namelist()]
+        if missing:
+            raise ValueError(f"static GTFS archive missing required files: {', '.join(missing)}")
+
+        try:
+            self._replace_static_data(db, payload)
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
+
+    def _replace_static_data(self, db: Session, payload: FeedPayload) -> None:
+        feed_name = self.feed.name
+
+        # Delete only data for this feed (same transaction as the inserts below)
         trip_ids = select(Trip.id).where(Trip.feed_name == feed_name)
         db.execute(delete(StopTime).where(StopTime.trip_id_ref.in_(trip_ids)))
         db.execute(delete(Trip).where(Trip.feed_name == feed_name))
@@ -78,7 +95,6 @@ class GTFSCollector:
         db.execute(delete(Stop).where(Stop.feed_name == feed_name))
         db.execute(delete(ServiceCalendar).where(ServiceCalendar.feed_name == feed_name))
         db.execute(delete(CalendarDate).where(CalendarDate.feed_name == feed_name))
-        db.commit()
 
         # Stream every CSV and bulk insert with Core in batches so memory stays flat.
         with zipfile.ZipFile(io.BytesIO(payload.payload)) as archive:
@@ -165,8 +181,6 @@ class GTFSCollector:
                 }
                 for row in self._read_csv_optional(archive, "calendar_dates.txt")
             ))
-
-        db.commit()
 
     @staticmethod
     def _insert_batched(db: Session, model: type, rows: Iterable[dict[str, Any]]) -> None:
