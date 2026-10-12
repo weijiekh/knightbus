@@ -149,3 +149,17 @@ def test_missing_artifact_falls_back_to_baseline(tmp_path, monkeypatch) -> None:
     p = make_predictor(monkeypatch, path)
     path.unlink()
     assert p.current_model() is None
+
+
+def test_stat_oserror_keeps_previous_model(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    touch_artifact(path, 1000)
+    first = StubModel(1.0)
+    patch_loader(monkeypatch, [first])
+    p = make_predictor(monkeypatch, path)
+
+    def boom(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(path), "stat", boom)
+    assert p.current_model() is first

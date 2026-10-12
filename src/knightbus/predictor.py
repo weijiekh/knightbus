@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from knightbus.ml import ResidualModel, load_residual_model
 from knightbus.models import CalendarDate, ModelVersion, Route, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.schemas import EtaItem, ModelInfoResponse, StopResponse
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters, scheduled_seconds_to_datetime
+
+logger = logging.getLogger(__name__)
 
 
 class ETAPredictor:
@@ -32,6 +35,9 @@ class ETAPredictor:
             self._ml_model = None
             self._model_mtime = None
             return None
+        except OSError:
+            logger.warning("Cannot stat model artifact %s; keeping current model", self._model_path, exc_info=True)
+            return self._ml_model
         if mtime != self._model_mtime:
             self._model_mtime = mtime
             loaded = load_residual_model(str(self._model_path))
