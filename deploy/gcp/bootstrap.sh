@@ -27,6 +27,19 @@ chown -R knightbus-ci:knightbus-ci "$APP_DIR/artifacts"
 chmod 755 "$APP_DIR/artifacts"
 install -d -m 700 -o knightbus-ci -g knightbus-ci /home/knightbus-ci/.ssh
 
+# Deploy user for CI/CD: pulls ghcr.io images and restarts compose.
+# docker group membership is root-equivalent; keep its key only in the
+# GitHub "production" environment secret DEPLOY_SSH_KEY.
+if ! id knightbus-deploy >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash --groups docker knightbus-deploy
+fi
+install -d -m 700 -o knightbus-deploy -g knightbus-deploy /home/knightbus-deploy/.ssh
+# Deploy user owns the app dir (compose files, .images.env); artifacts stay with knightbus-ci.
+find "$APP_DIR" -path "$APP_DIR/artifacts" -prune -o -exec chown knightbus-deploy:knightbus-deploy {} +
+if [ -f "$APP_DIR/.env" ]; then
+  chmod 600 "$APP_DIR/.env"
+fi
+
 if [ ! -e /etc/nginx/sites-enabled/knightbus ]; then
   cp "$APP_DIR/deploy/gcp/nginx-knightbus.conf" /etc/nginx/sites-available/knightbus
   ln -s /etc/nginx/sites-available/knightbus /etc/nginx/sites-enabled/knightbus
@@ -44,4 +57,4 @@ if [ ! -e "/etc/letsencrypt/live/$API_HOST" ]; then
   certbot --nginx -d "$API_HOST" --non-interactive --agree-tos --register-unsafely-without-email --redirect
 fi
 
-echo "Next: add CI public key to /home/knightbus-ci/.ssh/authorized_keys, create $APP_DIR/.env, then run deploy/update.sh"
+echo "Next: add training key to /home/knightbus-ci/.ssh/authorized_keys, deploy key to /home/knightbus-deploy/.ssh/authorized_keys, create $APP_DIR/.env (owned by knightbus-deploy), then push to main or run deploy/update.sh"

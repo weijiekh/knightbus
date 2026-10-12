@@ -84,11 +84,39 @@ for free, so it uses no GitHub Actions minutes.
 
 ## 6. GitHub secrets
 
-Add the secrets for `.github/workflows/train.yml` (SSH key for `knightbus-ci`,
-`VM_HOST`, database password, etc.; see the workflow). The workflow tunnels to
-`127.0.0.1:5433` and uploads `/opt/knightbus/artifacts/eta_lgbm.pkl`.
+Repository secrets (used by `train.yml` and `ci.yml`):
 
-## 7. Ephemeral IP warning
+| Secret | Value |
+|---|---|
+| `VM_HOST` | `34.123.154.175` |
+| `VM_KNOWN_HOSTS` | output of `ssh-keyscan -t ed25519 34.123.154.175` |
+| `VM_USER` | `knightbus-ci` |
+| `VM_SSH_KEY` | private key whose public half is in `/home/knightbus-ci/.ssh/authorized_keys` |
+| `DB_PASSWORD` | same value as `POSTGRES_PASSWORD` |
+
+Create a GitHub environment `production` (Settings → Environments) and add
+`DEPLOY_SSH_KEY` there: a separate ed25519 key whose public half goes in
+`/home/knightbus-deploy/.ssh/authorized_keys` (no extra options; the deploy
+runs commands). This key is root-equivalent on the VM via the docker group, so
+keep it out of repository-wide secrets.
+
+## 7. CI/CD (`.github/workflows/ci.yml`)
+
+- Pull requests: Python tests + Pages Function tests only (~2 billed minutes).
+- Push to `main`: tests, then build `ghcr.io/<owner>/knightbus-api` (`ML_DEPS=inference`)
+  and `knightbus-worker` (`ML_DEPS=none`) tagged with the commit SHA, then deploy:
+  copy the compose files and `deploy/gcp/deploy.sh` to the VM and run it as
+  `knightbus-deploy`. It pulls the SHA-tagged images with a job-scoped token,
+  runs `up -d --no-build` and health-checks `127.0.0.1:8100/v1/health`.
+  Nothing is built on the VM.
+- Changes that touch only `*.md` or `docs/**` skip CI.
+- The deployed tags are written to `/opt/knightbus/.images.env`. For manual runs, use
+  `docker compose --env-file .env --env-file .images.env -f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml ...`
+  so that the same images are kept.
+- Rollback: re-run the `ci` workflow for an older commit (Actions → ci → that run → Re-run jobs).
+- The frontend deploys separately through Cloudflare Pages Git integration (section 5).
+
+## 8. Ephemeral IP warning
 
 If the VM is stopped and gets a new external IP, update the nginx
 `server_name`, re-issue the cert, update the Pages `API_ORIGIN`, and update the
