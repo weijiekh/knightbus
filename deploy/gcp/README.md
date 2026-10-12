@@ -42,8 +42,11 @@ options above only stop agent/X11/pty use and limit port forwarding.
 
 ## 3. `.env` in `/opt/knightbus`
 
+Generate passwords URL-safe (`openssl rand -hex 24`): they are embedded in
+`DATABASE_URL`, and the same value is used for the `DB_PASSWORD` GitHub secret.
+
 ```
-POSTGRES_PASSWORD=<strong password>
+POSTGRES_PASSWORD=<output of `openssl rand -hex 24`>
 DATABASE_URL=postgresql+psycopg://postgres:<same password>@db:5432/knightbus
 KNIGHTBUS_DB_PORT=5433
 KNIGHTBUS_API_PORT=8100
