@@ -2,11 +2,11 @@ import csv
 import io
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
@@ -167,18 +167,41 @@ class GTFSCollector:
 
         db.commit()
 
+    @staticmethod
+    def latest_vehicle_timestamps(db: Session, feed_name: str, since: datetime) -> dict[str, int]:
+        rows = db.execute(
+            select(VehicleState.vehicle_id, func.max(VehicleState.timestamp_unix))
+            .where(
+                VehicleState.feed_name == feed_name,
+                VehicleState.observed_at >= since,
+                VehicleState.timestamp_unix.is_not(None),
+            )
+            .group_by(VehicleState.vehicle_id)
+        ).all()
+        return {vehicle_id: ts for vehicle_id, ts in rows}
+
     def normalize_vehicle_positions(self, db: Session, payload: FeedPayload) -> int:
         self.persist_raw_snapshot(db, "vehicle_positions", payload)
         feed = gtfs_rt.FeedMessage()
         feed.ParseFromString(payload.payload)
 
         route_stops_cache: dict[str, list[tuple[str, int, float, float]]] = {}
+        last_seen = self.latest_vehicle_timestamps(
+            db, self.feed.name, since=payload.fetched_at - timedelta(hours=1)
+        )
 
         inserted = 0
         for entity in feed.entity:
             if not entity.HasField("vehicle"):
                 continue
             vehicle = entity.vehicle
+
+            vehicle_id = vehicle.vehicle.id or entity.id or "unknown"
+            timestamp_unix = vehicle.timestamp or None
+            if timestamp_unix is not None and last_seen.get(vehicle_id, -1) >= timestamp_unix:
+                continue
+            if timestamp_unix is not None:
+                last_seen[vehicle_id] = timestamp_unix
 
             stop_id = vehicle.stop_id or None
             stop_seq = vehicle.current_stop_sequence or None
@@ -196,7 +219,7 @@ class GTFSCollector:
             db.add(
                 VehicleState(
                     feed_name=self.feed.name,
-                    vehicle_id=vehicle.vehicle.id or entity.id or "unknown",
+                    vehicle_id=vehicle_id,
                     trip_id=vehicle.trip.trip_id or None,
                     route_id=route_id,
                     stop_id=stop_id,
@@ -206,7 +229,7 @@ class GTFSCollector:
                     else None,
                     lat=lat,
                     lon=lon,
-                    timestamp_unix=vehicle.timestamp or None,
+                    timestamp_unix=timestamp_unix,
                     observed_at=payload.fetched_at,
                 )
             )
