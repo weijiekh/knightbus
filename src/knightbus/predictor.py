@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import Select, desc, select
 from sqlalchemy.orm import Session
@@ -14,11 +15,33 @@ from knightbus.utils import delay_from_vehicle_progress, haversine_meters, sched
 class ETAPredictor:
     def __init__(self) -> None:
         settings = get_settings()
-        self._ml_model: ResidualModel | None = load_residual_model(settings.model_artifact_path)
+        self._model_path = Path(settings.model_artifact_path)
+        self._model_mtime: float | None = None
+        self._ml_model: ResidualModel | None = None
         self._service_tz = settings.gtfs_service_tzinfo
+        self.current_model()
+
+    def current_model(self) -> ResidualModel | None:
+        """Return the ML model, reloading it when the artifact file's mtime changes.
+
+        A failed reload keeps the previously loaded model; a missing file clears it.
+        """
+        try:
+            mtime = self._model_path.stat().st_mtime
+        except FileNotFoundError:
+            self._ml_model = None
+            self._model_mtime = None
+            return None
+        if mtime != self._model_mtime:
+            self._model_mtime = mtime
+            loaded = load_residual_model(str(self._model_path))
+            if loaded is not None:
+                self._ml_model = loaded
+        return self._ml_model
 
     def get_stop_etas(self, db: Session, stop_id: str, route_id: str | None = None) -> list[EtaItem]:
         now = datetime.now(timezone.utc)
+        ml_model = self.current_model()
         stop = db.execute(select(Stop).where(Stop.stop_id == stop_id)).scalars().first()
         if stop is None:
             return []
@@ -73,7 +96,7 @@ class ETAPredictor:
 
             if (
                 predicted_arrival
-                and self._ml_model is not None
+                and ml_model is not None
                 and not (trip_update and trip_update.arrival_time_unix)
             ):
                 feature_row = build_feature_row(
@@ -85,7 +108,7 @@ class ETAPredictor:
                     delay_seconds=delay_seconds,
                 )
                 if feature_row.baseline_eta_seconds is not None:
-                    residual_seconds = self._ml_model.predict(feature_row.features)
+                    residual_seconds = ml_model.predict(feature_row.features)
                     adjusted_seconds = max(0, int(feature_row.baseline_eta_seconds + residual_seconds))
                     predicted_arrival = now + timedelta(seconds=adjusted_seconds)
                     source = "ml_residual"

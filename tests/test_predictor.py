@@ -1,8 +1,11 @@
+import os
+import pickle
 from datetime import datetime, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from knightbus import predictor as predictor_module
 from knightbus.db import Base
 from knightbus.models import Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.predictor import ETAPredictor
@@ -92,3 +95,52 @@ def test_predictor_uses_vehicle_progress_without_trip_updates() -> None:
     assert items
     assert items[0].prediction_source == "heuristic"
     assert items[0].vehicle_id == "vehicle-2"
+
+
+class StubModel:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def predict(self, df):  # noqa: ANN001
+        return [self.value]
+
+
+def write_artifact(path, value: float, mtime: float) -> None:  # noqa: ANN001
+    with open(path, "wb") as handle:
+        pickle.dump({"model": StubModel(value), "feature_columns": ["route_id"], "categorical_columns": []}, handle)
+    os.utime(path, (mtime, mtime))
+
+
+def make_predictor(monkeypatch, path) -> ETAPredictor:  # noqa: ANN001
+    monkeypatch.setenv("MODEL_ARTIFACT_PATH", str(path))
+    predictor_module.get_settings.cache_clear()
+    try:
+        return ETAPredictor()
+    finally:
+        predictor_module.get_settings.cache_clear()
+
+
+def test_model_reloads_when_artifact_changes(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    write_artifact(path, 1.0, mtime=1000)
+    p = make_predictor(monkeypatch, path)
+    assert p.current_model().model.value == 1.0
+    write_artifact(path, 2.0, mtime=2000)
+    assert p.current_model().model.value == 2.0
+
+
+def test_corrupt_artifact_keeps_previous_model(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    write_artifact(path, 1.0, mtime=1000)
+    p = make_predictor(monkeypatch, path)
+    path.write_bytes(b"not a pickle")
+    os.utime(path, (2000, 2000))
+    assert p.current_model().model.value == 1.0
+
+
+def test_missing_artifact_falls_back_to_baseline(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    write_artifact(path, 1.0, mtime=1000)
+    p = make_predictor(monkeypatch, path)
+    path.unlink()
+    assert p.current_model() is None
