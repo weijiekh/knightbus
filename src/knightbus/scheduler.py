@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import datetime, time as time_of_day
+from datetime import datetime, time as time_of_day, timezone
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -99,6 +99,15 @@ def run_training() -> None:
         logger.info("registered model version", extra={"version": version.version})
 
 
+def prune_realtime() -> None:
+    settings = get_settings()
+    with SessionLocal() as db:
+        deleted = ETLService().prune_realtime_states(
+            db, settings.realtime_retention_days, settings.raw_snapshot_retention_days
+        )
+        logger.info("pruned realtime states", extra={"deleted": deleted})
+
+
 def register_jobs(scheduler: BaseScheduler, settings: Settings) -> None:
     scheduler.add_job(
         poll_realtime_active_hours,
@@ -116,6 +125,13 @@ def register_jobs(scheduler: BaseScheduler, settings: Settings) -> None:
     scheduler.add_job(refresh_features, "interval", minutes=settings.feature_refresh_minutes, max_instances=1)
     if settings.training_in_worker:
         scheduler.add_job(run_training, "interval", hours=settings.training_refresh_hours, max_instances=1)
+    scheduler.add_job(
+        prune_realtime,
+        "interval",
+        hours=24,
+        max_instances=1,
+        next_run_time=datetime.now(timezone.utc),
+    )
 
 
 def main() -> None:

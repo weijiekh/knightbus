@@ -166,3 +166,7 @@ def test_training_job_registered_by_default() -> None:
 
 def test_training_job_skipped_when_disabled() -> None:
     assert "run_training" not in job_names(build_settings(TRAINING_IN_WORKER=False))
+
+
+def test_prune_job_registered() -> None:
+    assert "prune_realtime" in job_names(build_settings())

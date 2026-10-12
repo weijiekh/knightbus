@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     training_refresh_hours: int = Field(default=24, alias="TRAINING_REFRESH_HOURS")
     training_in_worker: bool = Field(default=True, alias="TRAINING_IN_WORKER")
     model_artifact_path: str = Field(default="artifacts/eta_lgbm.pkl", alias="MODEL_ARTIFACT_PATH")
+    realtime_retention_days: int = Field(default=14, alias="REALTIME_RETENTION_DAYS")
+    raw_snapshot_retention_days: int = Field(default=2, alias="RAW_SNAPSHOT_RETENTION_DAYS")
 
     @field_validator("gtfs_service_timezone")
     @classmethod
