@@ -899,3 +899,42 @@ In the GCP override, set `api: build: {context: ., args: {ML_DEPS: inference}}`,
 - [ ] **Step 7: Commits (atomic):**
   - `feat: store LightGBM booster string and predict without pandas`
   - `build: add ML_DEPS build arg for lean inference and worker images`
+
+---
+
+### Task 10: Stream static GTFS ingestion (memory)
+
+**Why:** Task 7 measured that the worker is OOM-killed during `load_static_feed` at 128m, 192m and 256m limits (peak ~200+ MiB; 384m survives), while it idles at ~58 MiB. `refresh_static` runs at startup and then every `GTFS_STATIC_REFRESH_HOURS` (24h), so this spike recurs daily. `collector.py:68-168` reads every CSV fully into `list[dict]`, keeps every ORM `Stop`/`Trip` object in lookup dicts, and adds every `StopTime` as an ORM object to the session before one commit.
+
+**Target:** first and daily static ingest of every configured feed completes with the worker at `mem_limit: 128m` (Task 7 value), with no change to the stored data.
+
+**Files:**
+- Modify: `src/knightbus/collector.py` (`load_static_feed`, `_read_csv`, `_read_csv_optional`)
+- Create: `tests/test_static_ingest.py`
+
+**Interfaces:**
+- `load_static_feed(self, db: Session, payload: FeedPayload) -> None` keeps its signature and resulting rows: the same tables, columns and per-feed delete-then-insert semantics.
+- Add `STATIC_INSERT_BATCH_SIZE = 5000` (module constant).
+
+- [ ] **Step 1: Write a characterization test FIRST, against the current code.** Build a tiny in-memory GTFS zip with `routes.txt`, `stops.txt`, `trips.txt`, `stop_times.txt` (including one row whose trip_id or stop_id is unknown, so it is skipped), `calendar.txt` and `calendar_dates.txt`. Run `load_static_feed` on SQLite in memory and assert:
+  - exact row counts per table;
+  - `StopTime.trip_id_ref` and `stop_id_ref` point at the right `Trip` and `Stop` (join on ids);
+  - `arrival_seconds` is parsed;
+  - a second load of the same payload replaces rather than duplicates the rows;
+  - rows of another `feed_name` are untouched.
+
+  Run it and expect PASS on the current code. Commit `test: characterize static GTFS ingestion`.
+- [ ] **Step 2: Implement streaming.**
+  - Read each CSV with `csv.DictReader(io.TextIOWrapper(archive.open(name), encoding="utf-8-sig"))` and iterate it, never materializing a list. Keep the existing behaviour for missing optional files.
+  - Insert routes, stops, trips, calendar and calendar_dates with SQLAlchemy Core `insert(Model)` in batches of `STATIC_INSERT_BATCH_SIZE`.
+  - Then build `stop_ids: dict[str, int]` and `trip_ids: dict[str, int]` with `select(Stop.stop_id, Stop.id).where(Stop.feed_name == ...)` (and the same for trips). These maps hold plain strings and ints, not ORM objects.
+  - Stream `stop_times.txt`, insert in Core batches, and skip rows with unknown trip or stop as today.
+  - Keep the zip open only while streaming. The `payload.payload` bytes are already in memory, so don't copy them.
+  - Commit once at the end, as today. Bulk Core inserts don't accumulate identity-map objects.
+- [ ] **Step 3:** Run the Step 1 test unchanged and expect PASS, then the full suite with `uv run pytest`. Commit `perf: stream static GTFS ingestion with batched core inserts`.
+- [ ] **Step 4: Measure.** Using `docker-compose -f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml` with worker `mem_limit: 128m`:
+  - start db and worker on a fresh volume;
+  - confirm 0 worker restarts (`docker inspect -f '{{.RestartCount}}'`) through the first static load of all feeds;
+  - record peak RSS from `docker stats` sampling.
+
+  If the upstream returns 429, retry later or feed a locally downloaded zip through a one-off script, and say which one you used. Then `down` and remove only the volume you created.
