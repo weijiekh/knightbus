@@ -1,5 +1,4 @@
 import os
-import pickle
 from datetime import datetime, timezone
 
 from sqlalchemy import create_engine
@@ -101,14 +100,16 @@ class StubModel:
     def __init__(self, value: float) -> None:
         self.value = value
 
-    def predict(self, df):  # noqa: ANN001
-        return [self.value]
 
-
-def write_artifact(path, value: float, mtime: float) -> None:  # noqa: ANN001
-    with open(path, "wb") as handle:
-        pickle.dump({"model": StubModel(value), "feature_columns": ["route_id"], "categorical_columns": []}, handle)
+def touch_artifact(path, mtime: float) -> None:  # noqa: ANN001
+    path.write_bytes(b"artifact")
     os.utime(path, (mtime, mtime))
+
+
+def patch_loader(monkeypatch, results: list) -> None:  # noqa: ANN001
+    """Make load_residual_model return successive entries of `results`."""
+    queue = list(results)
+    monkeypatch.setattr(predictor_module, "load_residual_model", lambda _path: queue.pop(0))
 
 
 def make_predictor(monkeypatch, path) -> ETAPredictor:  # noqa: ANN001
@@ -122,25 +123,29 @@ def make_predictor(monkeypatch, path) -> ETAPredictor:  # noqa: ANN001
 
 def test_model_reloads_when_artifact_changes(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     path = tmp_path / "eta.pkl"
-    write_artifact(path, 1.0, mtime=1000)
+    touch_artifact(path, 1000)
+    first, second = StubModel(1.0), StubModel(2.0)
+    patch_loader(monkeypatch, [first, second])
     p = make_predictor(monkeypatch, path)
-    assert p.current_model().model.value == 1.0
-    write_artifact(path, 2.0, mtime=2000)
-    assert p.current_model().model.value == 2.0
+    assert p.current_model() is first
+    touch_artifact(path, 2000)
+    assert p.current_model() is second
 
 
 def test_corrupt_artifact_keeps_previous_model(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     path = tmp_path / "eta.pkl"
-    write_artifact(path, 1.0, mtime=1000)
+    touch_artifact(path, 1000)
+    first = StubModel(1.0)
+    patch_loader(monkeypatch, [first, None])
     p = make_predictor(monkeypatch, path)
-    path.write_bytes(b"not a pickle")
-    os.utime(path, (2000, 2000))
-    assert p.current_model().model.value == 1.0
+    touch_artifact(path, 2000)
+    assert p.current_model() is first
 
 
 def test_missing_artifact_falls_back_to_baseline(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     path = tmp_path / "eta.pkl"
-    write_artifact(path, 1.0, mtime=1000)
+    touch_artifact(path, 1000)
+    patch_loader(monkeypatch, [StubModel(1.0)])
     p = make_predictor(monkeypatch, path)
     path.unlink()
     assert p.current_model() is None
