@@ -24,7 +24,7 @@ class ResidualModel:
 
         if col in self.categorical_columns:
             # Training fills missing categoricals with "unknown"; unseen values stay missing.
-            key = "unknown" if value is None else value
+            key = "unknown" if value is None else str(value)
             try:
                 return float(self.categories.get(col, []).index(key))
             except ValueError:

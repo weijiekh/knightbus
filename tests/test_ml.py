@@ -47,3 +47,21 @@ def test_old_pickle_format_returns_none(tmp_path) -> None:
     path = tmp_path / "old.pkl"
     path.write_bytes(pickle.dumps({"model": object(), "feature_columns": ["a"]}))
     assert load_residual_model(str(path)) is None
+
+
+def test_int_categorical_value_matches_stored_string_category(tmp_path) -> None:
+    rng = np.random.default_rng(1)
+    n = 300
+    df = pd.DataFrame({"stop": rng.choice(["1", "2", "3"], n), "hour": rng.integers(0, 24, n).astype(float)})
+    df["stop"] = df["stop"].astype("category")
+    y = (df["stop"].cat.codes * 30 + df["hour"]).astype(float)
+    model = lgb.LGBMRegressor(n_estimators=20, min_child_samples=5, verbose=-1)
+    model.fit(df, y, categorical_feature=["stop"])
+    path = tmp_path / "m.pkl"
+    save_residual_model(str(path), model, ["stop", "hour"], ["stop"], metrics={})
+
+    loaded = load_residual_model(str(path))
+
+    assert loaded is not None
+    assert loaded.predict({"stop": 2, "hour": 5.0}) == pytest.approx(loaded.predict({"stop": "2", "hour": 5.0}))
+    assert loaded._encode("stop", 2) == 1.0
