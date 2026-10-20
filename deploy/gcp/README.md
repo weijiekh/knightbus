@@ -6,8 +6,8 @@ host nginx. Memory budget: 450 MB total (`db` 128, `api` 192, `worker` 128, via
 `127.0.0.1:5433`, API `127.0.0.1:8100`; nothing is bound on `0.0.0.0`.
 The frontend lives on Cloudflare Pages and calls the API through a Pages Function.
 
-Placeholders: `<vm-ip>` is the VM's external IP; `<ci-user>` and `<deploy-user>`
-are the training and deploy users created by `bootstrap.sh`.
+Placeholders: `<vm-ip>` is the VM's external IP; `<ci-user>` is the
+CI user (training + deploy) created by `bootstrap.sh`.
 
 Never touch other projects' containers, volumes, `/etc/nginx/sites-enabled/cariruma`,
 or the `<vm-ip>.sslip.io` cert.
@@ -97,11 +97,9 @@ Repository secrets (used by `train.yml` and `ci.yml`):
 | `VM_SSH_KEY` | private key whose public half is in `/home/<ci-user>/.ssh/authorized_keys` |
 | `DB_PASSWORD` | same value as `POSTGRES_PASSWORD` |
 
-Create a GitHub environment `production` (Settings → Environments) and add
-`DEPLOY_SSH_KEY` there: a separate ed25519 key whose public half goes in
-`/home/<deploy-user>/.ssh/authorized_keys` (no extra options; the deploy
-runs commands). This key is root-equivalent on the VM via the docker group, so
-keep it out of repository-wide secrets.
+The same `VM_SSH_KEY` is used to deploy. `<ci-user>` is in the docker group,
+so this key is root-equivalent on the shared VM: keep it only in GitHub
+secrets and rotate it if it leaks.
 
 ## 7. CI/CD (`.github/workflows/ci.yml`)
 
@@ -109,7 +107,7 @@ keep it out of repository-wide secrets.
 - Push to `main`: tests, then build `ghcr.io/<owner>/knightbus-api` (`ML_DEPS=inference`)
   and `knightbus-worker` (`ML_DEPS=none`) tagged with the commit SHA, then deploy:
   copy the compose files and `deploy/gcp/deploy.sh` to the VM and run it as
-  `<deploy-user>`. It pulls the SHA-tagged images with a job-scoped token,
+  `<ci-user>`. It pulls the SHA-tagged images with a job-scoped token,
   runs `up -d --no-build` and health-checks `127.0.0.1:8100/v1/health`.
   Nothing is built on the VM.
 - Changes that touch only `*.md` or `docs/**` skip CI.

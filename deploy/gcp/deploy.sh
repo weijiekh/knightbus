@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run on the VM by CI as knightbus-deploy. Pulls prebuilt images and restarts.
+# Run on the VM by CI as knightbus-ci. Pulls prebuilt images and restarts.
 # Usage: deploy.sh <api-image> <worker-image> <ghcr-user>   (GHCR token on stdin)
 set -euo pipefail
 

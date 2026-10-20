@@ -83,7 +83,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: production
     permissions:
       contents: read
       packages: read
@@ -92,19 +91,19 @@ jobs:
       cancel-in-progress: false
     env:
       VM_HOST: ${{ secrets.VM_HOST }}
-      DEPLOY_USER: knightbus-deploy
+      DEPLOY_USER: ${{ secrets.VM_USER }}
       APP_DIR: /opt/knightbus
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure SSH
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
           VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
