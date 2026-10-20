@@ -405,4 +405,8 @@ def main() -> None:
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         model = TrainingService().run_training(db)
-        print(model.version)
+        print(f"model version={model.version} status={model.status}")
+
+
+if __name__ == "__main__":
+    main()

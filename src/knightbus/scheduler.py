@@ -1,7 +1,8 @@
 import logging
 import time
-from datetime import datetime, time as time_of_day
+from datetime import datetime, time as time_of_day, timezone
 
+from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from knightbus.collector import GTFSCollector
@@ -98,12 +99,16 @@ def run_training() -> None:
         logger.info("registered model version", extra={"version": version.version})
 
 
-def main() -> None:
-    configure_logging()
-    Base.metadata.create_all(bind=engine)
+def prune_realtime() -> None:
     settings = get_settings()
+    with SessionLocal() as db:
+        deleted = ETLService().prune_realtime_states(
+            db, settings.realtime_retention_days, settings.raw_snapshot_retention_days
+        )
+        logger.info("pruned realtime states", extra={"deleted": deleted})
 
-    scheduler = BlockingScheduler(timezone="UTC")
+
+def register_jobs(scheduler: BaseScheduler, settings: Settings) -> None:
     scheduler.add_job(
         poll_realtime_active_hours,
         "interval",
@@ -118,7 +123,24 @@ def main() -> None:
     )
     scheduler.add_job(refresh_static, "interval", hours=settings.gtfs_static_refresh_hours, max_instances=1)
     scheduler.add_job(refresh_features, "interval", minutes=settings.feature_refresh_minutes, max_instances=1)
-    scheduler.add_job(run_training, "interval", hours=settings.training_refresh_hours, max_instances=1)
+    if settings.training_in_worker:
+        scheduler.add_job(run_training, "interval", hours=settings.training_refresh_hours, max_instances=1)
+    scheduler.add_job(
+        prune_realtime,
+        "interval",
+        hours=24,
+        max_instances=1,
+        next_run_time=datetime.now(timezone.utc),
+    )
+
+
+def main() -> None:
+    configure_logging()
+    Base.metadata.create_all(bind=engine)
+    settings = get_settings()
+
+    scheduler = BlockingScheduler(timezone="UTC")
+    register_jobs(scheduler, settings)
 
     logger.info("running initial bootstrap jobs")
     try:

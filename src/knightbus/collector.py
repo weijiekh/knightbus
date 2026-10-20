@@ -2,11 +2,11 @@ import csv
 import io
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable, Iterator
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
@@ -15,6 +15,8 @@ from knightbus.models import CalendarDate, RawSnapshot, Route, ServiceCalendar, 
 from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
 
 STOP_MATCH_RADIUS_METERS = 200.0
+STATIC_INSERT_BATCH_SIZE = 5000
+REQUIRED_STATIC_FILES = ("routes.txt", "stops.txt", "trips.txt", "stop_times.txt")
 
 
 @dataclass
@@ -67,105 +69,142 @@ class GTFSCollector:
 
     def load_static_feed(self, db: Session, payload: FeedPayload) -> None:
         self.persist_raw_snapshot(db, "static", payload)
+        feed_name = self.feed.name
 
+        # Validate before deleting so a bad archive never wipes existing data.
         with zipfile.ZipFile(io.BytesIO(payload.payload)) as archive:
-            routes = self._read_csv(archive, "routes.txt")
-            stops = self._read_csv(archive, "stops.txt")
-            trips = self._read_csv(archive, "trips.txt")
-            stop_times = self._read_csv(archive, "stop_times.txt")
-            calendar = self._read_csv_optional(archive, "calendar.txt")
-            calendar_dates = self._read_csv_optional(archive, "calendar_dates.txt")
+            missing = [name for name in REQUIRED_STATIC_FILES if name not in archive.namelist()]
+        if missing:
+            raise ValueError(f"static GTFS archive missing required files: {', '.join(missing)}")
 
-        # Delete only data for this feed
-        trip_ids = select(Trip.id).where(Trip.feed_name == self.feed.name)
+        try:
+            self._replace_static_data(db, payload)
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
+
+    def _replace_static_data(self, db: Session, payload: FeedPayload) -> None:
+        feed_name = self.feed.name
+
+        # Delete only data for this feed (same transaction as the inserts below)
+        trip_ids = select(Trip.id).where(Trip.feed_name == feed_name)
         db.execute(delete(StopTime).where(StopTime.trip_id_ref.in_(trip_ids)))
-        db.execute(delete(Trip).where(Trip.feed_name == self.feed.name))
-        db.execute(delete(Route).where(Route.feed_name == self.feed.name))
-        db.execute(delete(Stop).where(Stop.feed_name == self.feed.name))
-        db.execute(delete(ServiceCalendar).where(ServiceCalendar.feed_name == self.feed.name))
-        db.execute(delete(CalendarDate).where(CalendarDate.feed_name == self.feed.name))
-        db.commit()
+        db.execute(delete(Trip).where(Trip.feed_name == feed_name))
+        db.execute(delete(Route).where(Route.feed_name == feed_name))
+        db.execute(delete(Stop).where(Stop.feed_name == feed_name))
+        db.execute(delete(ServiceCalendar).where(ServiceCalendar.feed_name == feed_name))
+        db.execute(delete(CalendarDate).where(CalendarDate.feed_name == feed_name))
 
-        stop_lookup: dict[str, Stop] = {}
-        trip_lookup: dict[str, Trip] = {}
-
-        for row in routes:
-            route = Route(
-                feed_name=self.feed.name,
-                route_id=row.get("route_id", ""),
-                short_name=row.get("route_short_name"),
-                long_name=row.get("route_long_name"),
-                route_type=int(row["route_type"]) if row.get("route_type") else None,
-            )
-            db.add(route)
-
-        for row in stops:
-            stop = Stop(
-                feed_name=self.feed.name,
-                stop_id=row.get("stop_id", ""),
-                name=row.get("stop_name"),
-                lat=float(row["stop_lat"]) if row.get("stop_lat") else None,
-                lon=float(row["stop_lon"]) if row.get("stop_lon") else None,
-            )
-            db.add(stop)
-            stop_lookup[stop.stop_id] = stop
-
-        for row in trips:
-            trip = Trip(
-                feed_name=self.feed.name,
-                trip_id=row.get("trip_id", ""),
-                route_id=row.get("route_id"),
-                service_id=row.get("service_id"),
-                headsign=row.get("trip_headsign"),
-                direction_id=int(row["direction_id"]) if row.get("direction_id") else None,
-            )
-            db.add(trip)
-            trip_lookup[trip.trip_id] = trip
-
-        db.flush()
-
-        for row in stop_times:
-            trip = trip_lookup.get(row.get("trip_id", ""))
-            stop = stop_lookup.get(row.get("stop_id", ""))
-            if not trip or not stop:
-                continue
-
-            db.add(
-                StopTime(
-                    trip_id_ref=trip.id,
-                    stop_id_ref=stop.id,
-                    stop_sequence=int(row["stop_sequence"]),
-                    arrival_time=row.get("arrival_time"),
-                    departure_time=row.get("departure_time"),
-                    arrival_seconds=parse_gtfs_time_to_seconds(row.get("arrival_time")),
-                    departure_seconds=parse_gtfs_time_to_seconds(row.get("departure_time")),
-                )
-            )
-
-        for row in calendar:
-            db.add(ServiceCalendar(
-                feed_name=self.feed.name,
-                service_id=row.get("service_id", ""),
-                monday=row.get("monday", "0") == "1",
-                tuesday=row.get("tuesday", "0") == "1",
-                wednesday=row.get("wednesday", "0") == "1",
-                thursday=row.get("thursday", "0") == "1",
-                friday=row.get("friday", "0") == "1",
-                saturday=row.get("saturday", "0") == "1",
-                sunday=row.get("sunday", "0") == "1",
-                start_date=row.get("start_date", ""),
-                end_date=row.get("end_date", ""),
+        # Stream every CSV and bulk insert with Core in batches so memory stays flat.
+        with zipfile.ZipFile(io.BytesIO(payload.payload)) as archive:
+            self._insert_batched(db, Route, (
+                {
+                    "feed_name": feed_name,
+                    "route_id": row.get("route_id", ""),
+                    "short_name": row.get("route_short_name"),
+                    "long_name": row.get("route_long_name"),
+                    "route_type": int(row["route_type"]) if row.get("route_type") else None,
+                }
+                for row in self._read_csv(archive, "routes.txt")
+            ))
+            self._insert_batched(db, Stop, (
+                {
+                    "feed_name": feed_name,
+                    "stop_id": row.get("stop_id", ""),
+                    "name": row.get("stop_name"),
+                    "lat": float(row["stop_lat"]) if row.get("stop_lat") else None,
+                    "lon": float(row["stop_lon"]) if row.get("stop_lon") else None,
+                }
+                for row in self._read_csv(archive, "stops.txt")
+            ))
+            self._insert_batched(db, Trip, (
+                {
+                    "feed_name": feed_name,
+                    "trip_id": row.get("trip_id", ""),
+                    "route_id": row.get("route_id"),
+                    "service_id": row.get("service_id"),
+                    "headsign": row.get("trip_headsign"),
+                    "direction_id": int(row["direction_id"]) if row.get("direction_id") else None,
+                }
+                for row in self._read_csv(archive, "trips.txt")
             ))
 
-        for row in calendar_dates:
-            db.add(CalendarDate(
-                feed_name=self.feed.name,
-                service_id=row.get("service_id", ""),
-                date=row.get("date", ""),
-                exception_type=int(row.get("exception_type", 0)),
+            stop_ids: dict[str, int] = dict(
+                db.execute(select(Stop.stop_id, Stop.id).where(Stop.feed_name == feed_name)).tuples().all()
+            )
+            trip_ids_map: dict[str, int] = dict(
+                db.execute(select(Trip.trip_id, Trip.id).where(Trip.feed_name == feed_name)).tuples().all()
+            )
+
+            def stop_time_rows():
+                for row in self._read_csv(archive, "stop_times.txt"):
+                    trip_pk = trip_ids_map.get(row.get("trip_id", ""))
+                    stop_pk = stop_ids.get(row.get("stop_id", ""))
+                    if trip_pk is None or stop_pk is None:
+                        continue
+                    yield {
+                        "trip_id_ref": trip_pk,
+                        "stop_id_ref": stop_pk,
+                        "stop_sequence": int(row["stop_sequence"]),
+                        "arrival_time": row.get("arrival_time"),
+                        "departure_time": row.get("departure_time"),
+                        "arrival_seconds": parse_gtfs_time_to_seconds(row.get("arrival_time")),
+                        "departure_seconds": parse_gtfs_time_to_seconds(row.get("departure_time")),
+                    }
+
+            self._insert_batched(db, StopTime, stop_time_rows())
+            del stop_ids, trip_ids_map
+
+            self._insert_batched(db, ServiceCalendar, (
+                {
+                    "feed_name": feed_name,
+                    "service_id": row.get("service_id", ""),
+                    "monday": row.get("monday", "0") == "1",
+                    "tuesday": row.get("tuesday", "0") == "1",
+                    "wednesday": row.get("wednesday", "0") == "1",
+                    "thursday": row.get("thursday", "0") == "1",
+                    "friday": row.get("friday", "0") == "1",
+                    "saturday": row.get("saturday", "0") == "1",
+                    "sunday": row.get("sunday", "0") == "1",
+                    "start_date": row.get("start_date", ""),
+                    "end_date": row.get("end_date", ""),
+                }
+                for row in self._read_csv_optional(archive, "calendar.txt")
+            ))
+            self._insert_batched(db, CalendarDate, (
+                {
+                    "feed_name": feed_name,
+                    "service_id": row.get("service_id", ""),
+                    "date": row.get("date", ""),
+                    "exception_type": int(row.get("exception_type", 0)),
+                }
+                for row in self._read_csv_optional(archive, "calendar_dates.txt")
             ))
 
-        db.commit()
+    @staticmethod
+    def _insert_batched(db: Session, model: type, rows: Iterable[dict[str, Any]]) -> None:
+        batch: list[dict[str, Any]] = []
+        for row in rows:
+            batch.append(row)
+            if len(batch) >= STATIC_INSERT_BATCH_SIZE:
+                db.execute(insert(model), batch)
+                batch = []
+        if batch:
+            db.execute(insert(model), batch)
+
+    @staticmethod
+    def latest_vehicle_timestamps(db: Session, feed_name: str, since: datetime) -> dict[str, int]:
+        rows = db.execute(
+            select(VehicleState.vehicle_id, func.max(VehicleState.timestamp_unix))
+            .where(
+                VehicleState.feed_name == feed_name,
+                VehicleState.observed_at >= since,
+                VehicleState.timestamp_unix.is_not(None),
+            )
+            .group_by(VehicleState.vehicle_id)
+        ).all()
+        return {vehicle_id: ts for vehicle_id, ts in rows}
 
     def normalize_vehicle_positions(self, db: Session, payload: FeedPayload) -> int:
         self.persist_raw_snapshot(db, "vehicle_positions", payload)
@@ -173,12 +212,22 @@ class GTFSCollector:
         feed.ParseFromString(payload.payload)
 
         route_stops_cache: dict[str, list[tuple[str, int, float, float]]] = {}
+        last_seen = self.latest_vehicle_timestamps(
+            db, self.feed.name, since=payload.fetched_at - timedelta(hours=1)
+        )
 
         inserted = 0
         for entity in feed.entity:
             if not entity.HasField("vehicle"):
                 continue
             vehicle = entity.vehicle
+
+            vehicle_id = vehicle.vehicle.id or entity.id or "unknown"
+            timestamp_unix = vehicle.timestamp or None
+            if timestamp_unix is not None and last_seen.get(vehicle_id, -1) >= timestamp_unix:
+                continue
+            if timestamp_unix is not None:
+                last_seen[vehicle_id] = timestamp_unix
 
             stop_id = vehicle.stop_id or None
             stop_seq = vehicle.current_stop_sequence or None
@@ -196,7 +245,7 @@ class GTFSCollector:
             db.add(
                 VehicleState(
                     feed_name=self.feed.name,
-                    vehicle_id=vehicle.vehicle.id or entity.id or "unknown",
+                    vehicle_id=vehicle_id,
                     trip_id=vehicle.trip.trip_id or None,
                     route_id=route_id,
                     stop_id=stop_id,
@@ -206,7 +255,7 @@ class GTFSCollector:
                     else None,
                     lat=lat,
                     lon=lon,
-                    timestamp_unix=vehicle.timestamp or None,
+                    timestamp_unix=timestamp_unix,
                     observed_at=payload.fetched_at,
                 )
             )
@@ -278,14 +327,13 @@ class GTFSCollector:
         return inserted
 
     @staticmethod
-    def _read_csv(archive: zipfile.ZipFile, path: str) -> list[dict[str, Any]]:
+    def _read_csv(archive: zipfile.ZipFile, path: str) -> Iterator[dict[str, Any]]:
         with archive.open(path) as file_obj:
             text_file = io.TextIOWrapper(file_obj, encoding="utf-8-sig")
-            return list(csv.DictReader(text_file))
+            yield from csv.DictReader(text_file)
 
     @staticmethod
-    def _read_csv_optional(archive: zipfile.ZipFile, path: str) -> list[dict[str, Any]]:
-        try:
-            return GTFSCollector._read_csv(archive, path)
-        except KeyError:
-            return []
+    def _read_csv_optional(archive: zipfile.ZipFile, path: str) -> Iterator[dict[str, Any]]:
+        if path not in archive.namelist():
+            return
+        yield from GTFSCollector._read_csv(archive, path)

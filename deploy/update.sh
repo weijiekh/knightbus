@@ -6,11 +6,19 @@ set -euo pipefail
 APP_DIR="${1:-/opt/knightbus}"
 cd "$APP_DIR"
 
+# EC2 default. GCP does not use this script: CI deploys via .github/workflows/deploy.yml (infra/gcp).
+COMPOSE_ARGS="${COMPOSE_ARGS:--f docker-compose.yml --profile web}"
+
 echo "Pulling latest changes..."
 git pull --ff-only
 
 echo "Rebuilding and restarting containers..."
-docker compose up --build -d
+docker compose $COMPOSE_ARGS up --build -d
+
+# Opt-in: this prunes the GLOBAL build cache, including other projects' on a shared host.
+if [ "${PRUNE_BUILD_CACHE:-0}" = "1" ]; then
+  docker builder prune -f
+fi
 
 echo "Done. Running containers:"
-docker compose ps
+docker compose $COMPOSE_ARGS ps

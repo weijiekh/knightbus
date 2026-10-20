@@ -716,7 +716,7 @@ main {
 // ══════════════════════════════════════════════
 // CONFIG — change this to your EC2 address
 // ══════════════════════════════════════════════
-// API is proxied through nginx — no hostname or port needed
+// API is same-origin: nginx locally, Pages Function (functions/v1) on Cloudflare Pages
 const API_BASE     = "";
 const RADIUS_M     = 500;
 const LIMIT        = 5;

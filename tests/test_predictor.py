@@ -1,8 +1,10 @@
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from knightbus import predictor as predictor_module
 from knightbus.db import Base
 from knightbus.models import Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.predictor import ETAPredictor
@@ -92,3 +94,72 @@ def test_predictor_uses_vehicle_progress_without_trip_updates() -> None:
     assert items
     assert items[0].prediction_source == "heuristic"
     assert items[0].vehicle_id == "vehicle-2"
+
+
+class StubModel:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+
+def touch_artifact(path, mtime: float) -> None:  # noqa: ANN001
+    path.write_bytes(b"artifact")
+    os.utime(path, (mtime, mtime))
+
+
+def patch_loader(monkeypatch, results: list) -> None:  # noqa: ANN001
+    """Make load_residual_model return successive entries of `results`."""
+    queue = list(results)
+    monkeypatch.setattr(predictor_module, "load_residual_model", lambda _path: queue.pop(0))
+
+
+def make_predictor(monkeypatch, path) -> ETAPredictor:  # noqa: ANN001
+    monkeypatch.setenv("MODEL_ARTIFACT_PATH", str(path))
+    predictor_module.get_settings.cache_clear()
+    try:
+        return ETAPredictor()
+    finally:
+        predictor_module.get_settings.cache_clear()
+
+
+def test_model_reloads_when_artifact_changes(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    touch_artifact(path, 1000)
+    first, second = StubModel(1.0), StubModel(2.0)
+    patch_loader(monkeypatch, [first, second])
+    p = make_predictor(monkeypatch, path)
+    assert p.current_model() is first
+    touch_artifact(path, 2000)
+    assert p.current_model() is second
+
+
+def test_corrupt_artifact_keeps_previous_model(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    touch_artifact(path, 1000)
+    first = StubModel(1.0)
+    patch_loader(monkeypatch, [first, None])
+    p = make_predictor(monkeypatch, path)
+    touch_artifact(path, 2000)
+    assert p.current_model() is first
+
+
+def test_missing_artifact_falls_back_to_baseline(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    touch_artifact(path, 1000)
+    patch_loader(monkeypatch, [StubModel(1.0)])
+    p = make_predictor(monkeypatch, path)
+    path.unlink()
+    assert p.current_model() is None
+
+
+def test_stat_oserror_keeps_previous_model(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "eta.pkl"
+    touch_artifact(path, 1000)
+    first = StubModel(1.0)
+    patch_loader(monkeypatch, [first])
+    p = make_predictor(monkeypatch, path)
+
+    def boom(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(path), "stat", boom)
+    assert p.current_model() is first

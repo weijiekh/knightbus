@@ -1,0 +1,195 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time. Two concurrent runs would race on git reset and the
+# container restart.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # Only redeploy the half that changed; a manual dispatch deploys both.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.web }}
+      api: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.api }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - frontend/**
+              - .github/workflows/deploy.yml
+            api:
+              - src/**
+              - Dockerfile
+              - scripts/**
+              - README.md
+              - pyproject.toml
+              - uv.lock
+              - infra/gcp/**
+              - .github/workflows/deploy.yml
+
+  web:
+    name: Deploy SPA to Cloudflare Pages
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No build: frontend/ is a static index.html plus functions/. Run from
+      # frontend/ so wrangler picks up frontend/functions (the /v1 proxy).
+      - name: Publish to Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deploy . --project-name=${{ vars.PAGES_PROJECT }} --branch=main
+
+  image:
+    name: Build and push ${{ matrix.name }} image
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: api
+            ml_deps: inference
+          - name: worker
+            ml_deps: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Built here, never on the e2-micro: 1 GB cannot build the ML wheels.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: ML_DEPS=${{ matrix.ml_deps }}
+          tags: |
+            ghcr.io/weijiekh/knightbus-${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/weijiekh/knightbus-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+  api:
+    name: Deploy API and worker to GCP e2-micro
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Pull images and restart
+        uses: appleboy/ssh-action@v1
+        env:
+          # This job's token: lets the VM pull the private images for the
+          # length of the job, so no long-lived registry credential sits on
+          # the box.
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          API_TAG: ${{ github.sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER,API_TAG
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            cd ~/knightbus
+            git fetch -q origin main
+            git checkout -q main
+            git reset -q --hard origin/main
+            cd infra/gcp
+
+            # Record the deployed tag so a manual `docker compose up` later
+            # keeps running this image, not whatever :latest became.
+            sed -i "s/^API_TAG=.*/API_TAG=${API_TAG}/" .env
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            docker compose pull api worker
+            docker logout ghcr.io
+
+            docker compose up -d --remove-orphans db api worker
+            docker image prune -f >/dev/null
+            # Old tags aren't dangling, so prune -f keeps them. Keep the
+            # newest 4 tags per image (about 3 images, as :latest shares one)
+            # for rollback. Removing by tag, not ID, as an ID with two tags
+            # refuses rmi. Scoped to our images: other projects on this VM
+            # keep theirs; the running image is refused.
+            for img in ghcr.io/weijiekh/knightbus-api ghcr.io/weijiekh/knightbus-worker; do
+              docker images "$img" --format '{{.Repository}}:{{.Tag}}' \
+                | tail -n +5 | xargs -r docker rmi >/dev/null 2>&1 || true
+            done
+
+      - name: Verify the API came back
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            for i in $(seq 1 24); do
+              if curl -fsS --max-time 5 http://127.0.0.1:8100/v1/health >/dev/null; then
+                echo "health ok after ${i} attempt(s)"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "API did not come back, recent logs:"
+            docker logs --tail 80 knightbus-api
+            exit 1
+
+  verify:
+    name: Verify the site is served
+    needs: [web, api]
+    # Run when at least one side deployed and nothing failed.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && contains(needs.*.result, 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # PAGES_PROJECT is a production-environment variable; without this the
+    # URL renders as "https://.pages.dev".
+    environment: production
+    steps:
+      # Through Pages, so this also proves the /v1 proxy and API_ORIGIN.
+      - run: |
+          set -euo pipefail
+          curl -fsS --max-time 15 "https://${{ vars.PAGES_PROJECT }}.pages.dev/v1/health"
+          echo
+          curl -fsS --max-time 15 -o /dev/null -w "SPA HTTP %{http_code}\n" \
+            "https://${{ vars.PAGES_PROJECT }}.pages.dev/"

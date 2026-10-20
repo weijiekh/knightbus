@@ -1,5 +1,7 @@
 # Deploying Knightbus on EC2
 
+> **Legacy.** The production target is now the shared GCP e2-micro. See `infra/gcp/README.md`. This EC2 path still works with `docker compose --profile web`.
+
 ## Architecture
 
 ```
@@ -66,7 +68,7 @@ Key values to set:
 Start all containers:
 
 ```bash
-docker compose up -d
+docker compose --profile web up -d
 docker compose ps        # verify all 4 containers are running: db, api, worker, web
 ```
 
@@ -97,7 +99,7 @@ SSH in and run:
 sudo /opt/knightbus/deploy/update.sh
 ```
 
-This does `git pull` + `docker compose up --build -d`.
+This does `git pull` + `docker compose --profile web up --build -d`.
 
 ---
 

@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from knightbus.models import AggregatedSegmentStat, StopTime, Trip, TripUpdateState
+from knightbus.models import AggregatedSegmentStat, RawSnapshot, StopTime, Trip, TripUpdateState, VehicleState
 
 
 class ETLService:
@@ -62,6 +62,25 @@ class ETLService:
 
         db.commit()
         return count
+
+    def prune_realtime_states(
+        self, db: Session, realtime_days: int, raw_days: int, now: datetime | None = None
+    ) -> int:
+        now = now or datetime.now(timezone.utc)
+        targets = []
+        if realtime_days > 0:
+            cutoff = now - timedelta(days=realtime_days)
+            targets += [
+                (VehicleState, VehicleState.observed_at < cutoff),
+                (TripUpdateState, TripUpdateState.observed_at < cutoff),
+            ]
+        if raw_days > 0:
+            targets.append((RawSnapshot, RawSnapshot.fetched_at < now - timedelta(days=raw_days)))
+        deleted = 0
+        for model, condition in targets:
+            deleted += db.execute(delete(model).where(condition)).rowcount or 0
+        db.commit()
+        return deleted
 
     def scheduled_stop_count(self, db: Session) -> int:
         return int(db.execute(select(func.count()).select_from(StopTime)).scalar_one())

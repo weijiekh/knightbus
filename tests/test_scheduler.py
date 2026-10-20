@@ -109,6 +109,12 @@ def test_active_hours_poll_skips_without_opening_db(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(scheduler, "get_settings", lambda: settings)
     monkeypatch.setattr(scheduler, "SessionLocal", fake_session_local)
+    # Pin "outside the active window" so the result doesn't depend on the wall clock.
+    monkeypatch.setattr(
+        scheduler,
+        "should_run_realtime_poll",
+        lambda **kwargs: kwargs["active_hours"] is False,
+    )
 
     scheduler.poll_realtime(
         active_hours=True,
@@ -149,3 +155,24 @@ def test_off_hours_poll_executes_realtime_fetch(monkeypatch: pytest.MonkeyPatch)
     )
 
     assert calls == ["fetch_vehicle_positions", "fetch_trip_updates"]
+
+
+from apscheduler.schedulers.background import BackgroundScheduler
+
+
+def job_names(settings: Settings) -> set[str]:
+    sched = BackgroundScheduler(timezone="UTC")
+    scheduler.register_jobs(sched, settings)
+    return {job.func.__name__ for job in sched.get_jobs()}
+
+
+def test_training_job_registered_by_default() -> None:
+    assert "run_training" in job_names(build_settings())
+
+
+def test_training_job_skipped_when_disabled() -> None:
+    assert "run_training" not in job_names(build_settings(TRAINING_IN_WORKER=False))
+
+
+def test_prune_job_registered() -> None:
+    assert "prune_realtime" in job_names(build_settings())

@@ -1,37 +1,51 @@
+name: knightbus
+
 services:
   db:
-    restart: "no"
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_DB: knightbus
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d knightbus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   api:
-    restart: "no"
+    restart: unless-stopped
     build: .
     env_file:
       - .env
     command: uvicorn knightbus.main:app --host 0.0.0.0 --port 56709
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
-      - "56709:56709"
+      - "127.0.0.1:56709:56709"
+    volumes:
+      - ./artifacts:/app/artifacts
 
   worker:
-    restart: "no"
+    restart: unless-stopped
     build: .
     env_file:
       - .env
     command: python -m knightbus.scheduler
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/app/artifacts
 
   web:
+    profiles: ["web"]
     restart: unless-stopped
     image: nginx:alpine
     ports:

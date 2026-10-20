@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Private-repo minutes: skip the Python job when only the frontend changed
+  # (and vice versa).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # paths-filter lists a PR's files through the API, which the default
+    # read-only token cannot do without pull-requests: read.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - src/**
+              - tests/**
+              - pyproject.toml
+              - uv.lock
+              - .github/workflows/ci.yml
+            frontend:
+              - frontend/**
+              - .github/workflows/ci.yml
+
+  backend:
+    name: Backend tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --extra ml --extra dev --frozen
+
+      - name: Python tests
+        run: uv run pytest -q
+
+  frontend:
+    name: Pages Function tests
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Pages Function tests
+        run: node --test frontend/functions/v1/proxy.test.mjs

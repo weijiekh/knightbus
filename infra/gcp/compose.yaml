@@ -1,0 +1,95 @@
+# Knightbus production on a shared GCP e2-micro (1 GB RAM), mirroring caruma.
+#
+# Memory caps keep one service from starving the others on the box (db 128m +
+# api 192m + worker 128m = 448m). Postgres and the API are published on
+# 127.0.0.1 only: the API for nginx, Postgres for the weekly training job's
+# SSH tunnel.
+#
+#   docker compose up -d db api worker
+#
+# Values come from .env next to this file (written by bootstrap.sh).
+# Images are built in GitHub Actions and pulled here; nothing builds on the VM.
+# NEVER run `down -v`: it deletes the pgdata volume.
+name: knightbus
+
+services:
+  db:
+    image: postgres:16
+    container_name: knightbus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: knightbus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    # Defaults assume a dedicated DB host; this one shares 1 GB.
+    command: >
+      postgres
+      -c shared_buffers=32MB
+      -c work_mem=2MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=15
+      -c effective_cache_size=128MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Loopback only, for the training job that reaches it over an SSH tunnel
+    # from GitHub Actions. Never bind this to 0.0.0.0.
+    ports:
+      - "127.0.0.1:5433:5432"
+    mem_limit: 128m
+    memswap_limit: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d knightbus"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/weijiekh/knightbus-api}:${API_TAG:-latest}
+    container_name: knightbus-api
+    restart: unless-stopped
+    command: uvicorn knightbus.main:app --host 0.0.0.0 --port 56709
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/knightbus
+      MALLOC_ARENA_MAX: "2"
+    ports:
+      - "127.0.0.1:8100:56709"
+    # Written by the training job (as knightbus-ci) over SSH; the API
+    # hot-reloads the model when the file changes.
+    volumes:
+      - ${ARTIFACTS_DIR:-/opt/knightbus/artifacts}:/app/artifacts:ro
+    # No swap beyond the cap: a runaway process is OOM-killed here instead of
+    # stalling the shared host.
+    mem_limit: 192m
+    memswap_limit: 192m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:56709/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    image: ${WORKER_IMAGE:-ghcr.io/weijiekh/knightbus-worker}:${API_TAG:-latest}
+    container_name: knightbus-worker
+    restart: unless-stopped
+    command: python -m knightbus.scheduler
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/knightbus
+      # Training runs weekly in GitHub Actions, not on this box.
+      TRAINING_IN_WORKER: "false"
+      MALLOC_ARENA_MAX: "2"
+    volumes:
+      - ${ARTIFACTS_DIR:-/opt/knightbus/artifacts}:/app/artifacts
+    mem_limit: 128m
+    memswap_limit: 128m
+
+volumes:
+  pgdata:
