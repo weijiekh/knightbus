@@ -68,7 +68,7 @@ def test_prefix_beats_word_beats_substring() -> None:
     add_stops(
         session,
         [
-            ("sub", "KL1 PUSAT MASJIDAN", 3.1, 101.7),  # substring only
+            ("sub", "KL1 PUSATMASJID BARU", 3.1, 101.7),  # substring only
             ("word", "KL2 LRT MASJID JAMEK", 3.1, 101.7),  # word start
             ("pre", "KL3 MASJID NEGARA", 3.1, 101.7),  # name starts with q
         ],
@@ -114,12 +114,12 @@ def test_routes_exact_before_prefix_before_long_name_and_feeds_kept() -> None:
     result = search(session, "190")
 
     assert [(r.route_id, r.feed_name) for r in result.routes] == [
-        ("F190", "rapid-bus-mrtfeeder"),
         ("U1900", "rapid-bus-kl"),
+        ("F190", "rapid-bus-mrtfeeder"),
         ("R1", "rapid-bus-kl"),
         ("R3", "rapid-bus-kl"),
     ]
-    assert result.routes[1].short_name == "190"
+    assert result.routes[0].short_name == "190"
 
 
 def test_stop_routes_aggregated_sorted_and_capped_at_six() -> None:

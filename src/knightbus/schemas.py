@@ -54,3 +54,26 @@ class ModelInfoResponse(BaseModel):
     status: str
     metrics_json: str | None = None
 
+
+
+class SearchStop(BaseModel):
+    stop_id: str
+    code: str | None = None
+    name: str | None = None
+    lat: float | None = None
+    lon: float | None = None
+    distance_m: float | None = None
+    routes: list[str] = []
+
+
+class SearchRoute(BaseModel):
+    route_id: str
+    short_name: str | None = None
+    long_name: str | None = None
+    feed_name: str
+
+
+class SearchResponse(BaseModel):
+    query: str
+    stops: list[SearchStop]
+    routes: list[SearchRoute]
