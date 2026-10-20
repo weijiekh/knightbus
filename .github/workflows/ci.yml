@@ -2,27 +2,50 @@ name: ci
 
 on:
   pull_request:
-    paths-ignore: ["**.md", "docs/**"]
   push:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**"]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Cancel superseded PR runs; never cancel a deploy mid-way on main.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  REGISTRY: ghcr.io
-  API_IMAGE: ghcr.io/${{ github.repository }}-api
-  WORKER_IMAGE: ghcr.io/${{ github.repository }}-worker
+  cancel-in-progress: true
 
 jobs:
-  test:
+  # Private-repo minutes: skip the Python job when only the frontend changed
+  # (and vice versa).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # paths-filter lists a PR's files through the API, which the default
+    # read-only token cannot do without pull-requests: read.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - src/**
+              - tests/**
+              - pyproject.toml
+              - uv.lock
+              - .github/workflows/ci.yml
+            frontend:
+              - frontend/**
+              - .github/workflows/ci.yml
+
+  backend:
+    name: Backend tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,100 +62,18 @@ jobs:
       - name: Python tests
         run: uv run pytest -q
 
+  frontend:
+    name: Pages Function tests
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Pages Function tests
         run: node --test frontend/functions/v1/proxy.test.mjs
-
-  build:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        include:
-          - name: api
-            ml_deps: inference
-          - name: worker
-            ml_deps: none
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          build-args: ML_DEPS=${{ matrix.ml_deps }}
-          tags: |
-            ghcr.io/${{ github.repository }}-${{ matrix.name }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}-${{ matrix.name }}:latest
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      packages: read
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: false
-    env:
-      VM_HOST: ${{ secrets.VM_HOST }}
-      DEPLOY_USER: ${{ secrets.VM_USER }}
-      APP_DIR: /opt/knightbus
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure SSH
-        env:
-          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
-
-      - name: Ship compose files and deploy script
-        run: |
-          set -euo pipefail
-          scp docker-compose.yml "$DEPLOY_USER@$VM_HOST:$APP_DIR/docker-compose.yml"
-          scp deploy/gcp/docker-compose.gcp.yml deploy/gcp/deploy.sh \
-            "$DEPLOY_USER@$VM_HOST:$APP_DIR/deploy/gcp/"
-
-      - name: Pull and restart
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC2029  # image refs are meant to expand on the runner
-          printf '%s\n' "$GHCR_TOKEN" | ssh "$DEPLOY_USER@$VM_HOST" \
-            "bash $APP_DIR/deploy/gcp/deploy.sh $API_IMAGE:$SHA $WORKER_IMAGE:$SHA $GHCR_USER"
-
-      - name: Health check
-        run: |
-          set -euo pipefail
-          for _ in $(seq 1 20); do
-            if ssh "$DEPLOY_USER@$VM_HOST" "curl -fsS http://127.0.0.1:8100/v1/health"; then
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "API did not become healthy" >&2
-          exit 1
