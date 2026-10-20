@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "127.0.0.1:${KNIGHTBUS_DB_PORT:-5432}:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d knightbus"]
       interval: 5s
@@ -28,7 +28,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${KNIGHTBUS_API_PORT:-56709}:56709"
+      - "127.0.0.1:56709:56709"
     volumes:
       - ./artifacts:/app/artifacts
 
