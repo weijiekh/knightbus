@@ -109,6 +109,12 @@ def test_active_hours_poll_skips_without_opening_db(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(scheduler, "get_settings", lambda: settings)
     monkeypatch.setattr(scheduler, "SessionLocal", fake_session_local)
+    # Pin "outside the active window" so the result doesn't depend on the wall clock.
+    monkeypatch.setattr(
+        scheduler,
+        "should_run_realtime_poll",
+        lambda **kwargs: kwargs["active_hours"] is False,
+    )
 
     scheduler.poll_realtime(
         active_hours=True,
