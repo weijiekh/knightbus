@@ -167,13 +167,32 @@ compose up -d --wait db
 log "nginx"
 # ---------------------------------------------------------------------------
 # Only this project's site is touched; caruma's stays as it is.
-sed "s/SERVER_NAME_PLACEHOLDER/${DOMAIN}/g" \
-    "${STACK_DIR}/nginx.conf" > /etc/nginx/sites-available/knightbus
-ln -sf /etc/nginx/sites-available/knightbus /etc/nginx/sites-enabled/knightbus
-if ! nginx -t; then
-    # Never leave a broken site enabled on the shared nginx.
-    rm -f /etc/nginx/sites-enabled/knightbus /etc/nginx/sites-available/knightbus
-    die "nginx -t failed; knightbus site removed, nginx untouched."
+# Once certbot has added the 443 block, nginx.conf (HTTP only) must not
+# overwrite it, so a site that already listens on 443 is left alone.
+SITE=/etc/nginx/sites-available/knightbus
+if grep -q 'listen 443' "$SITE" 2>/dev/null; then
+    echo "  site already has TLS, leaving it untouched"
+else
+    BACKUP=""
+    if [[ -f "$SITE" ]]; then
+        BACKUP="$(mktemp)"
+        cp "$SITE" "$BACKUP"
+    fi
+    sed "s/SERVER_NAME_PLACEHOLDER/${DOMAIN}/g" \
+        "${STACK_DIR}/nginx.conf" > "$SITE"
+    ln -sf "$SITE" /etc/nginx/sites-enabled/knightbus
+    if ! nginx -t; then
+        # Never leave a broken site enabled on the shared nginx. Restore the
+        # previous one if there was one, else remove ours.
+        if [[ -n "$BACKUP" ]]; then
+            cp "$BACKUP" "$SITE"
+            rm -f "$BACKUP"
+            die "nginx -t failed; previous knightbus site restored."
+        fi
+        rm -f /etc/nginx/sites-enabled/knightbus "$SITE"
+        die "nginx -t failed; knightbus site removed, nginx untouched."
+    fi
+    [[ -z "$BACKUP" ]] || rm -f "$BACKUP"
 fi
 systemctl reload nginx
 
@@ -181,7 +200,13 @@ systemctl reload nginx
 log "TLS"
 # ---------------------------------------------------------------------------
 if [[ -d "/etc/letsencrypt/live/${DOMAIN}" ]]; then
-    echo "  certificate already present, skipping certbot"
+    echo "  certificate already present, skipping issuance"
+    # Re-attach it if the site was rewritten as HTTP only.
+    if ! grep -q 'listen 443' /etc/nginx/sites-available/knightbus; then
+        certbot install --nginx --cert-name "$DOMAIN" -d "$DOMAIN" \
+            --redirect --non-interactive || \
+            warn "certbot install failed. Re-run: sudo certbot install --nginx --cert-name ${DOMAIN} -d ${DOMAIN}"
+    fi
 elif getent hosts "$DOMAIN" >/dev/null; then
     certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
         --register-unsafely-without-email --redirect || \

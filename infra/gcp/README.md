@@ -108,11 +108,15 @@ docker.
 
 ## 4. Cloudflare Pages
 
-Create the `manabas` Pages project (direct upload; `deploy.yml` publishes it with
+Create the `manabas` Pages project as **Direct Upload** (a Git-integrated project cannot be targeted by `wrangler pages deploy`; `deploy.yml` publishes it with
 wrangler, no Git integration needed). Set env var
 `API_ORIGIN=https://knightbus.<vm-ip>.sslip.io`.
 
 ## 5. CI/CD
+
+First deploy: if the pull from GHCR fails with 403, link the `knightbus-api` and
+`knightbus-worker` packages to the repo (GitHub package settings -> Manage
+Actions access -> add the repo, role Read).
 
 - `ci.yml` (PRs and pushes to `main`): path-filtered tests. Python tests run when
   `src/**`, `tests/**`, `pyproject.toml` or `uv.lock` change; the Pages Function
@@ -139,6 +143,7 @@ wrangler, no Git integration needed). Set env var
 
 ## 6. Ephemeral IP warning
 
-If the VM is stopped and gets a new external IP, update `DOMAIN`, re-run
-`bootstrap.sh` (new nginx `server_name` and cert), update the Pages `API_ORIGIN`
+If the VM is stopped and gets a new external IP, update `DOMAIN`, remove
+`/etc/nginx/sites-available/knightbus`, re-run `bootstrap.sh` (new nginx
+`server_name` and cert), update the Pages `API_ORIGIN`
 and the `DEPLOY_HOST` and `VM_HOST` secrets. Or reserve a static IP.
