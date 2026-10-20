@@ -6,8 +6,11 @@ host nginx. Memory budget: 450 MB total (`db` 128, `api` 192, `worker` 128, via
 `127.0.0.1:5433`, API `127.0.0.1:8100`; nothing is bound on `0.0.0.0`.
 The frontend lives on Cloudflare Pages and calls the API through a Pages Function.
 
+Placeholders: `<vm-ip>` is the VM's external IP; `<ci-user>` and `<deploy-user>`
+are the training and deploy users created by `bootstrap.sh`.
+
 Never touch other projects' containers, volumes, `/etc/nginx/sites-enabled/cariruma`,
-or the `34.123.154.175.sslip.io` cert.
+or the `<vm-ip>.sslip.io` cert.
 
 ## 1. Pre-checks
 
@@ -25,18 +28,18 @@ sudo bash /opt/knightbus/deploy/gcp/bootstrap.sh <repo-url>
 ```
 
 This clones the repo to `/opt/knightbus`, creates `artifacts/` (writable by the
-`knightbus-ci` user, readable by the api container through the `./artifacts`
-bind mount), creates the `knightbus-ci` user, installs the nginx site
+`<ci-user>` user, readable by the api container through the `./artifacts`
+bind mount), creates the `<ci-user>` user, installs the nginx site
 `/etc/nginx/sites-enabled/knightbus` (`nginx -t` runs before reload) and gets a
 cert with `certbot --nginx`. Then add the CI public key to
-`/home/knightbus-ci/.ssh/authorized_keys`, with key options that disable
+`/home/<ci-user>/.ssh/authorized_keys`, with key options that disable
 everything except forwarding to the loopback Postgres port:
 
 ```
 restrict,port-forwarding,permitopen="127.0.0.1:5433" ssh-ed25519 AAAA... github-actions-training
 ```
 
-`knightbus-ci` still has a normal shell on this shared VM: the workflow's `scp`
+`<ci-user>` still has a normal shell on this shared VM: the workflow's `scp`
 and `mv` need command execution, so a forced `command=` cannot be used. The
 options above only stop agent/X11/pty use and limit port forwarding.
 
@@ -62,7 +65,7 @@ GTFS_FEEDS=...                    # plus the other GTFS_* vars from .env.example
 cd /opt/knightbus
 COMPOSE_ARGS="-f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml" deploy/update.sh
 curl -s http://127.0.0.1:8100/v1/health
-curl -s https://knightbus.34.123.154.175.sslip.io/v1/health
+curl -s https://knightbus.<vm-ip>.sslip.io/v1/health
 ```
 
 `POSTGRES_PASSWORD` only applies when the Postgres volume is first initialised;
@@ -79,7 +82,7 @@ limit, raise it to 256m and lower `worker`, keeping the 450 MB total.
 
 Create project `manabas` (fallback `basmana`) via Git integration: root
 directory `frontend`, no build command. Set env var
-`API_ORIGIN=https://knightbus.34.123.154.175.sslip.io`. Cloudflare builds this
+`API_ORIGIN=https://knightbus.<vm-ip>.sslip.io`. Cloudflare builds this
 for free, so it uses no GitHub Actions minutes.
 
 ## 6. GitHub secrets
@@ -88,15 +91,15 @@ Repository secrets (used by `train.yml` and `ci.yml`):
 
 | Secret | Value |
 |---|---|
-| `VM_HOST` | `34.123.154.175` |
-| `VM_KNOWN_HOSTS` | output of `ssh-keyscan -t ed25519 34.123.154.175` |
-| `VM_USER` | `knightbus-ci` |
-| `VM_SSH_KEY` | private key whose public half is in `/home/knightbus-ci/.ssh/authorized_keys` |
+| `VM_HOST` | `<vm-ip>` |
+| `VM_KNOWN_HOSTS` | output of `ssh-keyscan -t ed25519 <vm-ip>` |
+| `VM_USER` | `<ci-user>` |
+| `VM_SSH_KEY` | private key whose public half is in `/home/<ci-user>/.ssh/authorized_keys` |
 | `DB_PASSWORD` | same value as `POSTGRES_PASSWORD` |
 
 Create a GitHub environment `production` (Settings → Environments) and add
 `DEPLOY_SSH_KEY` there: a separate ed25519 key whose public half goes in
-`/home/knightbus-deploy/.ssh/authorized_keys` (no extra options; the deploy
+`/home/<deploy-user>/.ssh/authorized_keys` (no extra options; the deploy
 runs commands). This key is root-equivalent on the VM via the docker group, so
 keep it out of repository-wide secrets.
 
@@ -106,7 +109,7 @@ keep it out of repository-wide secrets.
 - Push to `main`: tests, then build `ghcr.io/<owner>/knightbus-api` (`ML_DEPS=inference`)
   and `knightbus-worker` (`ML_DEPS=none`) tagged with the commit SHA, then deploy:
   copy the compose files and `deploy/gcp/deploy.sh` to the VM and run it as
-  `knightbus-deploy`. It pulls the SHA-tagged images with a job-scoped token,
+  `<deploy-user>`. It pulls the SHA-tagged images with a job-scoped token,
   runs `up -d --no-build` and health-checks `127.0.0.1:8100/v1/health`.
   Nothing is built on the VM.
 - Changes that touch only `*.md` or `docs/**` skip CI.
