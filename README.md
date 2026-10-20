@@ -228,7 +228,7 @@ Features:
 
 The nginx container proxies `/v1/*` to the `api` container internally — no extra ports needed. Access at `http://<your-server>` (port 80).
 
-Production frontend is on Cloudflare Pages, which proxies `/v1/*` to the API. See `deploy/gcp/README.md` for the GCP setup. The EC2 path in `deploy/README.md` is legacy.
+Production frontend is on Cloudflare Pages, which proxies `/v1/*` to the API. See `infra/gcp/README.md` for the GCP setup. The EC2 path in `deploy/README.md` is legacy.
 
 ## API endpoints
 
@@ -284,7 +284,7 @@ The current data.gov.my GTFS-realtime documentation for Prasarana states that ve
 
 ## Default deployment shape
 
-- Shared GCP e2-micro (1 GB), Docker Compose: `docker compose -f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml up -d --build`. Runbook: `deploy/gcp/README.md`
+- Shared GCP e2-micro (1 GB), Docker Compose: `infra/gcp/compose.yaml` (prebuilt images, deployed by `.github/workflows/deploy.yml`). Runbook: `infra/gcp/README.md`
 - One Postgres instance, one API process, one worker process using APScheduler (each with a `mem_limit`)
 - Frontend on Cloudflare Pages, calling the API through a Pages Function
 - Weekly model training in GitHub Actions (`.github/workflows/train.yml`), not in the worker

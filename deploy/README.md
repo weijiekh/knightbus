@@ -1,6 +1,6 @@
 # Deploying Knightbus on EC2
 
-> **Legacy.** The production target is now the shared GCP e2-micro. See `deploy/gcp/README.md`. This EC2 path still works with `docker compose --profile web`.
+> **Legacy.** The production target is now the shared GCP e2-micro. See `infra/gcp/README.md`. This EC2 path still works with `docker compose --profile web`.
 
 ## Architecture
 

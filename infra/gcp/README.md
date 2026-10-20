@@ -1,124 +1,144 @@
 # Knightbus on the shared GCP e2-micro
 
-Knightbus (`db`, `api`, `worker`) runs in Docker on the shared 1 GB VM behind the
-host nginx. Memory budget: 450 MB total (`db` 128, `api` 192, `worker` 128, via
-`mem_limit`), relying on the existing swap. Host ports: Postgres
-`127.0.0.1:5433`, API `127.0.0.1:8100`; nothing is bound on `0.0.0.0`.
-The frontend lives on Cloudflare Pages and calls the API through a Pages Function.
+Mirrors caruma's `infra/gcp` layout. `db`, `api` and `worker` run in Docker
+(`infra/gcp/compose.yaml`, project `knightbus`) on the shared 1 GB VM behind the
+host nginx. Memory budget: 448 MB (`db` 128, `api` 192, `worker` 128, each with
+`memswap_limit` equal to `mem_limit`). Host ports: Postgres `127.0.0.1:5433`,
+API `127.0.0.1:8100`; nothing is bound on `0.0.0.0`. The frontend lives on
+Cloudflare Pages and calls the API through a Pages Function.
 
-Placeholders: `<vm-ip>` is the VM's external IP; `<ci-user>` is the
-CI user (training + deploy) created by `bootstrap.sh`.
+Placeholders: `<vm-ip>` is the VM's external IP; `<app-user>` is the SSH account
+that owns `~/knightbus` and runs deploys; `knightbus-ci` is the training-only
+user created by `bootstrap.sh`.
 
-Never touch other projects' containers, volumes, `/etc/nginx/sites-enabled/cariruma`,
-or the `<vm-ip>.sslip.io` cert.
+Never touch caruma's containers, volumes, nginx site or the bare
+`<vm-ip>.sslip.io` cert. Knightbus uses `knightbus.<vm-ip>.sslip.io`.
+Never run `docker compose down -v`: it deletes the Postgres volume.
 
-## 1. Pre-checks
+## 1. Deploy key, host alias, clone
+
+The repo is private. The VM's `~/.ssh/config` already maps `Host github.com` to
+caruma's deploy key, so Knightbus gets its own key and a host alias:
 
 ```bash
-free -m          # confirm >= ~450 MB of RAM + swap headroom
-df -h /          # Postgres data budget is 4 GB
-docker ps        # note the other projects; leave them alone
+ssh <app-user>@<vm-ip>
+ssh-keygen -t ed25519 -N '' -C knightbus-deploy -f ~/.ssh/knightbus_deploy
+cat ~/.ssh/knightbus_deploy.pub   # GitHub: repo Settings -> Deploy keys (read-only)
+cat >> ~/.ssh/config <<'CFG'
+
+Host github.com-knightbus
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/knightbus_deploy
+  IdentitiesOnly yes
+CFG
+git clone git@github.com-knightbus:weijiekh/knightbus.git ~/knightbus
 ```
+
+`bootstrap.sh` does the key and alias steps itself if they are missing, but it
+needs a checkout to run from, so clone first.
 
 ## 2. Bootstrap (once, idempotent)
 
 ```bash
-sudo git clone <repo-url> /opt/knightbus   # or let the script clone it
-sudo bash /opt/knightbus/deploy/gcp/bootstrap.sh <repo-url>
+DOMAIN=knightbus.<vm-ip>.sslip.io SPA_ORIGIN=https://manabas.pages.dev \
+  sudo -E bash ~/knightbus/infra/gcp/bootstrap.sh
 ```
 
-This clones the repo to `/opt/knightbus`, creates `artifacts/` (writable by the
-`<ci-user>` user, readable by the api container through the `./artifacts`
-bind mount), creates the `<ci-user>` user, installs the nginx site
-`/etc/nginx/sites-enabled/knightbus` (`nginx -t` runs before reload) and gets a
-cert with `certbot --nginx`. Then add the CI public key to
-`/home/<ci-user>/.ssh/authorized_keys`, with key options that disable
+It installs missing packages, writes `infra/gcp/.env` once (generated
+`POSTGRES_PASSWORD`, `API_TAG=latest`, GTFS and retention vars from
+`.env.example`; never overwritten), starts Postgres, installs the nginx site
+`/etc/nginx/sites-enabled/knightbus` (`nginx -t` runs before reload; a failing
+site is removed) and gets a cert with certbot unless
+`/etc/letsencrypt/live/$DOMAIN` exists. It also creates `knightbus-ci` and
+`/opt/knightbus/artifacts` (owned by `knightbus-ci`, mode 755, bind-mounted into
+the containers).
+
+`knightbus-ci` is for training only and is NOT in the docker group; the script
+removes it from the group if it was added earlier. Add the training public key
+to `/home/knightbus-ci/.ssh/authorized_keys` with options that disable
 everything except forwarding to the loopback Postgres port:
 
 ```
 restrict,port-forwarding,permitopen="127.0.0.1:5433" ssh-ed25519 AAAA... github-actions-training
 ```
 
-`<ci-user>` still has a normal shell on this shared VM: the workflow's `scp`
-and `mv` need command execution, so a forced `command=` cannot be used. The
-options above only stop agent/X11/pty use and limit port forwarding.
+It still has a normal shell: the workflow's `scp` and `mv` need command
+execution, so a forced `command=` cannot be used.
 
-## 3. `.env` in `/opt/knightbus`
+Firewall and swap are not touched; caruma's bootstrap set them up for this host
+(the VM has about 5 GB of swap).
 
-Generate passwords URL-safe (`openssl rand -hex 24`): they are embedded in
-`DATABASE_URL`, and the same value is used for the `DB_PASSWORD` GitHub secret.
+Knightbus Postgres has not been started on the VM yet, so a fresh generated
+password is fine. If an interim `/opt/knightbus/.env` exists, copy its
+`POSTGRES_PASSWORD` into `infra/gcp/.env` only if a Postgres volume was already
+initialised with it; otherwise ignore the interim file and remove it. The interim
+`/opt/knightbus` git checkout is not used any more; only `/opt/knightbus/artifacts`
+matters.
 
-```
-POSTGRES_PASSWORD=<output of `openssl rand -hex 24`>
-DATABASE_URL=postgresql+psycopg://postgres:<same password>@db:5432/knightbus
-KNIGHTBUS_DB_PORT=5433
-KNIGHTBUS_API_PORT=8100
-TRAINING_IN_WORKER=false
-REALTIME_RETENTION_DAYS=14        # default 14: prune vehicle position rows older than this
-RAW_SNAPSHOT_RETENTION_DAYS=2     # default 2: prune raw feed snapshots older than this
-GTFS_FEEDS=...                    # plus the other GTFS_* vars from .env.example
-```
-
-## 4. Start
-
-```bash
-cd /opt/knightbus
-COMPOSE_ARGS="-f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml" deploy/update.sh
-curl -s http://127.0.0.1:8100/v1/health
-curl -s https://knightbus.<vm-ip>.sslip.io/v1/health
-```
-
+Set the `DB_PASSWORD` repo secret to the `POSTGRES_PASSWORD` in `infra/gcp/.env`.
 `POSTGRES_PASSWORD` only applies when the Postgres volume is first initialised;
 changing it later requires `ALTER USER` inside the db.
 
-`update.sh` pulls, rebuilds (`api` with `ML_DEPS=inference`, `worker` with
-`ML_DEPS=none`), and starts. Set `PRUNE_BUILD_CACHE=1` to also run `docker builder prune -f`
-to protect disk; note it clears the build cache of ALL projects on this shared Docker host.
-Check memory with `docker stats --no-stream` and OOM kills with
-`docker inspect -f '{{.State.OOMKilled}}' knightbus-api-1`. If `api` hits its
-limit, raise it to 256m and lower `worker`, keeping the 450 MB total.
+## 3. GitHub secrets and variables
 
-## 5. Cloudflare Pages
+`production` environment (used by `deploy.yml`):
 
-Create project `manabas` (fallback `basmana`) via Git integration: root
-directory `frontend`, no build command. Set env var
-`API_ORIGIN=https://knightbus.<vm-ip>.sslip.io`. Cloudflare builds this
-for free, so it uses no GitHub Actions minutes.
+| Name | Kind | Value |
+|---|---|---|
+| `DEPLOY_HOST` | secret | `<vm-ip>` |
+| `DEPLOY_USER` | secret | `<app-user>` |
+| `DEPLOY_SSH_KEY` | secret | private key whose public half is in `<app-user>`'s `authorized_keys` |
+| `CLOUDFLARE_API_TOKEN` | secret | token with Pages edit permission |
+| `CLOUDFLARE_ACCOUNT_ID` | secret | Cloudflare account id |
+| `PAGES_PROJECT` | variable | `manabas` |
 
-## 6. GitHub secrets
-
-Repository secrets (used by `train.yml` and `ci.yml`):
+Repository secrets (used by `train.yml`):
 
 | Secret | Value |
 |---|---|
 | `VM_HOST` | `<vm-ip>` |
 | `VM_KNOWN_HOSTS` | output of `ssh-keyscan -t ed25519 <vm-ip>` |
-| `VM_USER` | `<ci-user>` |
-| `VM_SSH_KEY` | private key whose public half is in `/home/<ci-user>/.ssh/authorized_keys` |
+| `VM_USER` | `knightbus-ci` |
+| `VM_SSH_KEY` | private key whose public half is in `/home/knightbus-ci/.ssh/authorized_keys` |
 | `DB_PASSWORD` | same value as `POSTGRES_PASSWORD` |
 
-The same `VM_SSH_KEY` is used to deploy. `<ci-user>` is in the docker group,
-so this key is root-equivalent on the shared VM: keep it only in GitHub
-secrets and rotate it if it leaks.
+The deploy key and the training key are separate: the training key cannot run
+docker.
 
-## 7. CI/CD (`.github/workflows/ci.yml`)
+## 4. Cloudflare Pages
 
-- Pull requests: Python tests + Pages Function tests only (~2 billed minutes).
-- Push to `main`: tests, then build `ghcr.io/<owner>/knightbus-api` (`ML_DEPS=inference`)
-  and `knightbus-worker` (`ML_DEPS=none`) tagged with the commit SHA, then deploy:
-  copy the compose files and `deploy/gcp/deploy.sh` to the VM and run it as
-  `<ci-user>`. It pulls the SHA-tagged images with a job-scoped token,
-  runs `up -d --no-build` and health-checks `127.0.0.1:8100/v1/health`.
-  Nothing is built on the VM.
-- Changes that touch only `*.md` or `docs/**` skip CI.
-- The deployed tags are written to `/opt/knightbus/.images.env`. For manual runs, use
-  `docker compose --env-file .env --env-file .images.env -f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml ...`
-  so that the same images are kept.
-- Rollback: re-run the `ci` workflow for an older commit (Actions → ci → that run → Re-run jobs).
-- The frontend deploys separately through Cloudflare Pages Git integration (section 5).
+Create the `manabas` Pages project (direct upload; `deploy.yml` publishes it with
+wrangler, no Git integration needed). Set env var
+`API_ORIGIN=https://knightbus.<vm-ip>.sslip.io`.
 
-## 8. Ephemeral IP warning
+## 5. CI/CD
 
-If the VM is stopped and gets a new external IP, update the nginx
-`server_name`, re-issue the cert, update the Pages `API_ORIGIN`, and update the
-`VM_HOST` secret. Or reserve a static IP.
+- `ci.yml` (PRs and pushes to `main`): path-filtered tests. Python tests run when
+  `src/**`, `tests/**`, `pyproject.toml` or `uv.lock` change; the Pages Function
+  test runs when `frontend/**` changes.
+- `deploy.yml` (push to `main`, or manual dispatch which deploys both halves):
+  - `web`: `wrangler pages deploy` of `frontend/` when `frontend/**` changed.
+  - `image`: builds `ghcr.io/weijiekh/knightbus-api` (`ML_DEPS=inference`) and
+    `knightbus-worker` (`ML_DEPS=none`), tagged with the commit SHA and `latest`,
+    when `src/**`, `Dockerfile`, `pyproject.toml`, `uv.lock` or `infra/gcp/**`
+    changed. Nothing is built on the VM.
+  - `api`: SSHes in as `<app-user>`, resets `~/knightbus` to `origin/main`,
+    writes the SHA to `API_TAG` in `infra/gcp/.env`, pulls with a job-scoped
+    token, runs `up -d --remove-orphans db api worker`, keeps the newest 4 tags
+    per knightbus image, then polls `127.0.0.1:8100/v1/health` (dumping
+    `knightbus-api` logs on failure).
+  - `verify`: fetches `/v1/health` and the SPA root through Pages.
+- Manual runs on the VM: `cd ~/knightbus/infra/gcp && docker compose ps`. The
+  deployed tag is in `.env`, so a manual `up -d` keeps the same images.
+- Rollback: set `API_TAG` in `infra/gcp/.env` to an older SHA still on the box and
+  `docker compose up -d api worker`, or re-run the Deploy workflow for that commit.
+- Check memory with `docker stats --no-stream` and OOM kills with
+  `docker inspect -f '{{.State.OOMKilled}}' knightbus-api`. If `api` hits its
+  limit, raise it to 256m and lower `worker`, keeping the 448 MB total.
+
+## 6. Ephemeral IP warning
+
+If the VM is stopped and gets a new external IP, update `DOMAIN`, re-run
+`bootstrap.sh` (new nginx `server_name` and cert), update the Pages `API_ORIGIN`
+and the `DEPLOY_HOST` and `VM_HOST` secrets. Or reserve a static IP.
