@@ -405,8 +405,13 @@ async function apiFetch(path, signal) {
   if (!res.ok) throw new HttpError(res.status);
   return res.json();
 }
+function rememberStopFromEtas(data) {
+  if (!data?.stop_id || !data.stop_name || S.stopMeta[data.stop_id]?.name) return false;
+  rememberStop({ stop_id: data.stop_id, raw_name: [data.stop_code, data.stop_name].filter(Boolean).join(" "), lat: data.lat, lon: data.lon });
+  return true;
+}
 async function fetchEtas(stopId) {
-  try { return await apiFetch(`/v1/stops/${encodeURIComponent(stopId)}/etas`); }
+  try { const data = await apiFetch(`/v1/stops/${encodeURIComponent(stopId)}/etas`); rememberStopFromEtas(data); return data; }
   catch (err) { if (err.status === 404) return { stop_id: stopId, items: [], generated_at: new Date().toISOString() }; throw err; }
 }
 function setOffline(on) {
@@ -663,11 +668,15 @@ function toggleSaved(id) {
   if (b) { b.innerHTML = I.star(isSaved(id)); b.classList.toggle("on", isSaved(id)); b.setAttribute("aria-pressed", String(isSaved(id))); b.setAttribute("aria-label", isSaved(id) ? "Remove from saved" : "Save stop"); }
 }
 function goBack() { if (history.length > 1) history.back(); else location.hash = "#/"; }
-function renderStop({ id }) {
-  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; }
+function stopHeadText(id) {
   const { code, name } = stopDisplay(id);
   const d = stopDistance(id);
   const meta = [code || id, d != null ? fmtDist(d) : null, d != null ? `${walkMin(d)} min walk` : null].filter(Boolean).join(" · ");
+  return { name, meta };
+}
+function renderStop({ id }) {
+  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; }
+  const { name, meta } = stopHeadText(id);
   const saved = isSaved(id);
   view.innerHTML = `
     <div class="bar">
@@ -691,6 +700,12 @@ async function loadStop(id, silent) {
     const data = await fetchEtas(id);
     if (stopState.id !== id) return;
     stopState.data = data; stopState.at = Date.now();
+    const head = $(".stop-head");
+    if (head && data.stop_name) {
+      const { name, meta } = stopHeadText(id);
+      head.querySelector(".code").textContent = meta;
+      head.querySelector("h1").textContent = name;
+    }
   } catch { /* keep last data; banner shows offline */ }
   if (S.view === "stop" && currentRoute.id === id) renderStopBody();
 }
