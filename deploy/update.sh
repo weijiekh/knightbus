@@ -6,7 +6,7 @@ set -euo pipefail
 APP_DIR="${1:-/opt/knightbus}"
 cd "$APP_DIR"
 
-# EC2 default; on GCP set COMPOSE_ARGS="-f docker-compose.yml -f deploy/gcp/docker-compose.gcp.yml"
+# EC2 default. GCP does not use this script: CI deploys via .github/workflows/deploy.yml (infra/gcp).
 COMPOSE_ARGS="${COMPOSE_ARGS:--f docker-compose.yml --profile web}"
 
 echo "Pulling latest changes..."
