@@ -21,6 +21,10 @@ class EtaItem(BaseModel):
 
 class StopEtaResponse(BaseModel):
     stop_id: str
+    stop_name: str | None = None
+    stop_code: str | None = None
+    lat: float | None = None
+    lon: float | None = None
     generated_at: datetime
     items: list[EtaItem]
 
@@ -54,3 +58,26 @@ class ModelInfoResponse(BaseModel):
     status: str
     metrics_json: str | None = None
 
+
+
+class SearchStop(BaseModel):
+    stop_id: str
+    code: str | None = None
+    name: str | None = None
+    lat: float | None = None
+    lon: float | None = None
+    distance_m: float | None = None
+    routes: list[str] = []
+
+
+class SearchRoute(BaseModel):
+    route_id: str
+    short_name: str | None = None
+    long_name: str | None = None
+    feed_name: str
+
+
+class SearchResponse(BaseModel):
+    query: str
+    stops: list[SearchStop]
+    routes: list[SearchRoute]

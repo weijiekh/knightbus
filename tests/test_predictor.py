@@ -163,3 +163,41 @@ def test_stat_oserror_keeps_previous_model(tmp_path, monkeypatch) -> None:  # no
 
     monkeypatch.setattr(type(path), "stat", boom)
     assert p.current_model() is first
+
+
+def test_stop_etas_endpoint_includes_stop_name_and_code(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+
+    from knightbus import main as main_module
+    from knightbus.db import get_db
+    from knightbus.schemas import EtaItem
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine)()
+    session.add_all(
+        [
+            Stop(stop_id="1001", name="KL105 LRT MASJID JAMEK", lat=3.149, lon=101.696),
+            Stop(stop_id="1002", name="Plain Stop"),
+        ]
+    )
+    session.commit()
+    now = datetime.now(timezone.utc)
+    item = EtaItem(
+        route_id="r", trip_id="t", stop_id="x", prediction_source="heuristic", data_timestamp=now
+    )
+    monkeypatch.setattr(main_module.predictor, "get_stop_etas", lambda *a, **k: [item])
+    main_module.app.dependency_overrides[get_db] = lambda: session
+    try:
+        client = TestClient(main_module.app)
+        body = client.get("/v1/stops/1001/etas").json()
+        assert body["stop_code"] == "KL105"
+        assert body["stop_name"] == "LRT MASJID JAMEK"
+        assert (body["lat"], body["lon"]) == (3.149, 101.696)
+        plain = client.get("/v1/stops/1002/etas").json()
+        assert plain["stop_code"] is None and plain["stop_name"] == "Plain Stop"
+        unknown = client.get("/v1/stops/9999/etas").json()
+        assert unknown["stop_name"] is None and unknown["stop_code"] is None
+    finally:
+        main_module.app.dependency_overrides.clear()
