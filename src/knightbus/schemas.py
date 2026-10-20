@@ -21,6 +21,10 @@ class EtaItem(BaseModel):
 
 class StopEtaResponse(BaseModel):
     stop_id: str
+    stop_name: str | None = None
+    stop_code: str | None = None
+    lat: float | None = None
+    lon: float | None = None
     generated_at: datetime
     items: list[EtaItem]
 

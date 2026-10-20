@@ -8,7 +8,8 @@ from knightbus.config import get_settings
 from knightbus.db import get_db
 from knightbus.logging import configure_logging
 from knightbus.predictor import ETAPredictor
-from knightbus.search import search as search_stops_and_routes
+from knightbus.models import Stop
+from knightbus.search import search as search_stops_and_routes, split_stop_name
 from knightbus.schemas import HealthResponse, SearchResponse, StopEtaResponse, StopResponse, VehicleResponse
 
 configure_logging()
@@ -54,7 +55,17 @@ def stop_etas(
     items = predictor.get_stop_etas(db, stop_id=stop_id, route_id=route_id)
     if not items:
         raise HTTPException(status_code=404, detail=f"No ETA data found for stop {stop_id}")
-    return StopEtaResponse(stop_id=stop_id, generated_at=datetime.now(timezone.utc), items=items)
+    stop = db.query(Stop).filter(Stop.stop_id == stop_id).first()
+    code, name = split_stop_name(stop.name) if stop else (None, None)
+    return StopEtaResponse(
+        stop_id=stop_id,
+        stop_name=name,
+        stop_code=code,
+        lat=stop.lat if stop else None,
+        lon=stop.lon if stop else None,
+        generated_at=datetime.now(timezone.utc),
+        items=items,
+    )
 
 
 @app.get("/v1/routes/{route_id}/vehicles", response_model=list[VehicleResponse])
