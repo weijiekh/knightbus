@@ -223,7 +223,7 @@ class GTFSCollector:
         feed = gtfs_rt.FeedMessage()
         feed.ParseFromString(payload.payload)
 
-        route_stops_cache: dict[str, list[tuple[str, int, float, float]]] = {}
+        route_stops_cache: dict[tuple[str, str | None, str], list[tuple[str, int, float, float]]] = {}
         last_seen = self.latest_vehicle_timestamps(
             db, self.feed.name, since=payload.fetched_at - timedelta(hours=1)
         )
@@ -247,9 +247,11 @@ class GTFSCollector:
             lon = vehicle.position.longitude if vehicle.HasField("position") else None
             route_id = vehicle.trip.route_id or None
 
-            if stop_id is None and lat is not None and lon is not None and route_id:
+            trip_id = vehicle.trip.trip_id or None
+            if stop_id is None and lat is not None and lon is not None and (trip_id or route_id):
                 matched = self._match_nearest_stop(
                     db, lat, lon, route_id, route_stops_cache,
+                    feed_name=self.feed.name, trip_id=trip_id,
                 )
                 if matched:
                     stop_id, stop_seq = matched
@@ -277,27 +279,49 @@ class GTFSCollector:
         return inserted
 
     @staticmethod
+    def _stops_where(db: Session, *conditions: Any) -> list[tuple[str, int, float, float]]:
+        rows = db.execute(
+            select(Stop.stop_id, StopTime.stop_sequence, Stop.lat, Stop.lon)
+            .join(StopTime, StopTime.stop_id_ref == Stop.id)
+            .join(Trip, Trip.id == StopTime.trip_id_ref)
+            .where(*conditions, Stop.lat.is_not(None), Stop.lon.is_not(None))
+            .distinct()
+        ).all()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    @staticmethod
     def _match_nearest_stop(
         db: Session,
         lat: float,
         lon: float,
-        route_id: str,
-        cache: dict[str, list[tuple[str, int, float, float]]],
+        route_id: str | None,
+        cache: dict[tuple[str, str | None, str], list[tuple[str, int, float, float]]],
+        feed_name: str | None = None,
+        trip_id: str | None = None,
     ) -> tuple[str, int] | None:
-        """Find the nearest stop on a route within STOP_MATCH_RADIUS_METERS."""
-        if route_id not in cache:
-            rows = db.execute(
-                select(Stop.stop_id, StopTime.stop_sequence, Stop.lat, Stop.lon)
-                .join(StopTime, StopTime.stop_id_ref == Stop.id)
-                .join(Trip, Trip.id == StopTime.trip_id_ref)
-                .where(Trip.route_id == route_id, Stop.lat.is_not(None), Stop.lon.is_not(None))
-                .distinct()
-            ).all()
-            cache[route_id] = [(r[0], r[1], r[2], r[3]) for r in rows]
+        """Find the nearest stop within STOP_MATCH_RADIUS_METERS.
+
+        Prefers the stops of the vehicle's own trip: some feeds (penang,
+        mrtfeeder) publish realtime route_ids that never appear in static
+        trips.route_id, while trip_id still joins. Falls back to the route.
+        """
+        candidates: list[tuple[str, int, float, float]] = []
+        if trip_id and feed_name:
+            key = ("trip", feed_name, trip_id)
+            if key not in cache:
+                cache[key] = GTFSCollector._stops_where(
+                    db, Trip.feed_name == feed_name, Trip.trip_id == trip_id
+                )
+            candidates = cache[key]
+        if not candidates and route_id:
+            key = ("route", None, route_id)
+            if key not in cache:
+                cache[key] = GTFSCollector._stops_where(db, Trip.route_id == route_id)
+            candidates = cache[key]
 
         best_dist = STOP_MATCH_RADIUS_METERS
         best_match: tuple[str, int] | None = None
-        for stop_id, stop_seq, slat, slon in cache[route_id]:
+        for stop_id, stop_seq, slat, slon in candidates:
             dist = haversine_meters(lat, lon, slat, slon)
             if dist < best_dist:
                 best_dist = dist

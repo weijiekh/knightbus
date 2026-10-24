@@ -201,3 +201,59 @@ def test_stop_etas_endpoint_includes_stop_name_and_code(monkeypatch) -> None:
         assert unknown["stop_name"] is None and unknown["stop_code"] is None
     finally:
         main_module.app.dependency_overrides.clear()
+
+
+def _local_seconds() -> int:
+    from zoneinfo import ZoneInfo
+
+    local = datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
+    return local.hour * 3600 + local.minute * 60 + local.second
+
+
+def _stop_with_trip(session, trip_id: str, sequences: dict[int, int], stop: Stop | None = None):  # noqa: ANN001
+    stop = stop or Stop(stop_id=f"s-{trip_id}", name="S")
+    trip = Trip(trip_id=trip_id, route_id="r")
+    session.add_all([stop, trip])
+    session.flush()
+    for seq, secs in sequences.items():
+        session.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=seq, arrival_seconds=secs))
+    session.commit()
+    return stop, trip
+
+
+def test_stop_etas_return_upcoming_trips_not_the_days_earliest() -> None:
+    session = build_session()
+    now_s = _local_seconds()
+    stop = Stop(stop_id="up", name="S")
+    session.add(stop)
+    session.flush()
+    for i, secs in enumerate([max(0, now_s - 7200), now_s + 600]):
+        trip = Trip(trip_id=f"t{i}", route_id="r")
+        session.add(trip)
+        session.flush()
+        session.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=3, arrival_seconds=secs))
+    session.commit()
+
+    items = ETAPredictor().get_stop_etas(session, "up")
+
+    assert [i.trip_id for i in items] == ["t1"]
+
+
+def test_vehicle_elsewhere_on_the_trip_sets_delay_and_passed_bus_is_dropped() -> None:
+    session = build_session()
+    now_s = _local_seconds()
+    stop, trip = _stop_with_trip(session, "live", {2: now_s + 300, 5: now_s + 900})
+    stop2, _ = _stop_with_trip(session, "gone", {7: now_s + 300})
+    session.add_all([
+        VehicleState(vehicle_id="v-live", trip_id="live", stop_id="elsewhere", current_stop_sequence=2,
+                     observed_at=datetime.now(timezone.utc), timestamp_unix=int(datetime.now(timezone.utc).timestamp())),
+        VehicleState(vehicle_id="v-gone", trip_id="gone", stop_id="elsewhere", current_stop_sequence=9,
+                     observed_at=datetime.now(timezone.utc)),
+    ])
+    session.commit()
+
+    live = ETAPredictor().get_stop_etas(session, stop.stop_id)
+    gone = ETAPredictor().get_stop_etas(session, stop2.stop_id)
+
+    assert live and live[0].vehicle_id == "v-live" and live[0].prediction_source == "heuristic"
+    assert gone == []

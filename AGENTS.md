@@ -19,7 +19,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Do not introduce Redis, Celery, Kafka, Airflow, or Kubernetes unless explicitly requested
 - Prefer schedule + heuristic ETA behavior over speculative ML complexity
 - Treat GTFS ingestion and normalization as first-class production code, not notebook logic
-- When a GTFS-realtime feed omits `stop_id`, the collector infers it by matching vehicle GPS to the nearest stop on the route within 200m (`STOP_MATCH_RADIUS_METERS` in `collector.py`)
+- When a GTFS-realtime feed omits `stop_id`, the collector infers it by matching vehicle GPS to the nearest stop on the vehicle's trip (falling back to the route, since penang/mrtfeeder realtime route_ids don't match static) within 200m (`STOP_MATCH_RADIUS_METERS` in `collector.py`)
 - Schema: `create_all` only adds missing tables; index drops/other DDL go in `src/knightbus/migrations.py` (idempotent, run at worker startup). Static GTFS reload is skipped when the zip sha256 matches `static_feed_state`; static zips are not stored in `raw_snapshots`
 - Keep training code isolated so it can stay optional in low-cost deployments
 - Model artifact is a LightGBM booster string; the API predicts without pandas/sklearn

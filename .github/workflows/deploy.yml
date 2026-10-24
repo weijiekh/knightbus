@@ -114,47 +114,58 @@ jobs:
 
     steps:
       - name: Pull images and restart
-        uses: appleboy/ssh-action@v1
+        timeout-minutes: 20
         env:
           # This job's token: lets the VM pull the private images for the
           # length of the job, so no long-lived registry credential sits on
-          # the box.
+          # the box. Sent over ssh stdin, never as an argument: appleboy's
+          # `envs:` puts it in the remote `bash -c` argv, readable by every
+          # user on the VM via `ps`.
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
           API_TAG: ${{ github.sha }}
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: GHCR_TOKEN,GHCR_USER,API_TAG
-          command_timeout: 20m
-          script: |
-            set -euo pipefail
-            cd ~/knightbus
-            git fetch -q origin main
-            git checkout -q main
-            git reset -q --hard origin/main
-            cd infra/gcp
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-            # Record the deployed tag so a manual `docker compose up` later
-            # keeps running this image, not whatever :latest became.
-            sed -i "s/^API_TAG=.*/API_TAG=${API_TAG}/" .env
+          {
+            printf 'GHCR_TOKEN=%q\nGHCR_USER=%q\nAPI_TAG=%q\n' "$GHCR_TOKEN" "$GHCR_USER" "$API_TAG"
+            cat <<'REMOTE'
+          set -euo pipefail
+          cd ~/knightbus
+          git fetch -q origin main
+          git checkout -q main
+          git reset -q --hard origin/main
+          cd infra/gcp
 
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            docker compose pull api worker
-            docker logout ghcr.io
+          # Record the deployed tag so a manual `docker compose up` later
+          # keeps running this image, not whatever :latest became.
+          sed -i "s/^API_TAG=.*/API_TAG=${API_TAG}/" .env
 
-            docker compose up -d --remove-orphans db api worker
-            docker image prune -f >/dev/null
-            # Old tags aren't dangling, so prune -f keeps them. Keep the
-            # newest 4 tags per image (about 3 images, as :latest shares one)
-            # for rollback. Removing by tag, not ID, as an ID with two tags
-            # refuses rmi. Scoped to our images: other projects on this VM
-            # keep theirs; the running image is refused.
-            for img in ghcr.io/weijiekh/knightbus-api ghcr.io/weijiekh/knightbus-worker; do
-              docker images "$img" --format '{{.Repository}}:{{.Tag}}' \
-                | tail -n +5 | xargs -r docker rmi >/dev/null 2>&1 || true
-            done
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker compose pull api worker
+          docker logout ghcr.io
+
+          docker compose up -d --remove-orphans db api worker
+          docker image prune -f >/dev/null
+          # Old tags aren't dangling, so prune -f keeps them. Keep the
+          # newest 4 tags per image (about 3 images, as :latest shares one)
+          # for rollback. Removing by tag, not ID, as an ID with two tags
+          # refuses rmi. Scoped to our images: other projects on this VM
+          # keep theirs; the running image is refused.
+          for img in ghcr.io/weijiekh/knightbus-api ghcr.io/weijiekh/knightbus-worker; do
+            docker images "$img" --format '{{.Repository}}:{{.Tag}}' \
+              | tail -n +5 | xargs -r docker rmi >/dev/null 2>&1 || true
+          done
+          REMOTE
+          } | ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            'umask 077; f=$(mktemp); trap "rm -f $f" EXIT; cat > "$f"; bash "$f" </dev/null'
 
       - name: Verify the API came back
         uses: appleboy/ssh-action@v1
