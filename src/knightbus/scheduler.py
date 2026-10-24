@@ -87,9 +87,11 @@ def refresh_static() -> None:
                 continue
             if collector.static_unchanged(db, payload):
                 logger.info("GTFS static feed unchanged, skipping", extra={"feed": feed.name})
+                del payload
                 continue
             collector.load_static_feed(db, payload)
             logger.info("refreshed GTFS static feed", extra={"feed": feed.name})
+            del payload  # release the zip before the next feed downloads
 
 
 def refresh_features() -> None:

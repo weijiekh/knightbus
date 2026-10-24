@@ -16,7 +16,7 @@ from knightbus.models import CalendarDate, RawSnapshot, Route, ServiceCalendar, 
 from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
 
 STOP_MATCH_RADIUS_METERS = 200.0
-STATIC_INSERT_BATCH_SIZE = 5000
+STATIC_INSERT_BATCH_SIZE = 1000
 REQUIRED_STATIC_FILES = ("routes.txt", "stops.txt", "trips.txt", "stop_times.txt")
 
 

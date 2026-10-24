@@ -23,7 +23,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Schema: `create_all` only adds missing tables; index drops/other DDL go in `src/knightbus/migrations.py` (idempotent, run at worker startup). Static GTFS reload is skipped when the zip sha256 matches `static_feed_state`; static zips are not stored in `raw_snapshots`
 - Keep training code isolated so it can stay optional in low-cost deployments
 - Model artifact is a LightGBM booster string; the API predicts without pandas/sklearn
-- Static GTFS ingest streams with batched Core inserts; GCP `mem_limit`s are db 128m, api 192m, worker 128m
+- Static GTFS ingest streams with batched Core inserts (1000 rows); GCP `mem_limit`s are db 128m, api 192m, worker 128m
 - ML training requires at least 5,000 labeled rows (ideally 1–2 weeks of vehicle position history) before activating
 - Training is skipped if the newest data is older than 48 hours to prevent stale models
 - Training metrics include per-route and per-stop coverage; check `routes_below_100` and `stops_below_50` to identify under-represented categories
