@@ -1,10 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7ee05a"/><stop offset="1" stop-color="#3fae2a"/></linearGradient></defs><rect width="512" height="512" fill="url(#g)"/><g transform="translate(51 51) scale(.8)"><g transform="translate(-50 0)">
-<path d="M148 150a40 40 0 0 1 40-40h136a40 40 0 0 1 40 40v200a24 24 0 0 1-24 24H172a24 24 0 0 1-24-24z" fill="#0c1a08"/>
-<rect x="172" y="138" width="152" height="86" rx="14" fill="#5ecb3e"/>
-<rect x="244" y="138" width="8" height="86" fill="#0c1a08"/>
-<rect x="172" y="244" width="152" height="10" rx="5" fill="#5ecb3e" opacity=".35"/>
-<circle cx="186" cy="310" r="15" fill="#5ecb3e"/><circle cx="310" cy="310" r="15" fill="#5ecb3e"/>
-<rect x="164" y="372" width="40" height="34" rx="8" fill="#0c1a08"/><rect x="292" y="372" width="40" height="34" rx="8" fill="#0c1a08"/>
-<path d="M360 118a96 96 0 0 1 56 56M360 78a136 136 0 0 1 96 96" fill="none" stroke="#0c1a08" stroke-width="22" stroke-linecap="round"/>
-<circle cx="370" cy="160" r="0"/>
-</g></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254"><rect width="1254" height="1254" fill="#5cc545"/><g transform="translate(125 125) scale(.8)"><defs><mask id="m"><rect width="1254" height="1254" fill="#fff"/><circle cx="875" cy="862" r="172" fill="#000"/></mask></defs>
+<g fill="#fff">
+<g mask="url(#m)">
+<path d="M260 392C260 330 300 290 360 284Q565 276 770 284C830 290 870 330 870 392V890H292C272 880 260 862 260 838z"/>
+<path d="M293 880h99v60a35 35 0 0 1-35 35h-29a35 35 0 0 1-35-35zM630 880h99v60a35 35 0 0 1-35 35h-29a35 35 0 0 1-35-35z"/>
+</g>
+<path d="M237 433h-30a35 35 0 0 0-35 35v95a35 35 0 0 0 35 35h30zM892 433h30a35 35 0 0 1 35 35v95a35 35 0 0 1-35 35h-30z"/>
+<path fill-rule="evenodd" d="M875 712a150 150 0 1 0 0 300a150 150 0 1 0 0-300zm0 38a112 112 0 1 1 0 224a112 112 0 1 1 0-224z"/>
+</g>
+<g fill="#5cc545"><rect x="400" y="318" width="337" height="55" rx="27"/><rect x="302" y="405" width="528" height="262" rx="38"/><circle cx="357" cy="776" r="50"/></g>
+<path d="M873 796V858l50 40" fill="none" stroke="#fff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/></g></svg>

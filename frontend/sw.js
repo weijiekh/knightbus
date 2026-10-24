@@ -1,5 +1,5 @@
 // App-shell cache. /v1/* (live ETAs) is never cached or intercepted.
-const CACHE = "manabas-v1";
+const CACHE = "manabas-v2";
 const SHELL = ["/", "/icon.svg", "/icon-192.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
