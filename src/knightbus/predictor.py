@@ -15,6 +15,10 @@ from knightbus.utils import delay_from_vehicle_progress, haversine_meters, sched
 logger = logging.getLogger(__name__)
 
 
+UPCOMING_GRACE_SECONDS = 120
+VEHICLE_MAX_AGE_SECONDS = 15 * 60
+
+
 class ETAPredictor:
     def __init__(self) -> None:
         settings = get_settings()
@@ -66,9 +70,17 @@ class ETAPredictor:
         if valid_sids is not None:
             query = query.where(Trip.service_id.in_(valid_sids))
 
-        schedule_rows = db.execute(query.limit(25)).all()
+        # Upcoming first. Past the last bus of the day the lookup falls back to
+        # the day's earliest trips, which the UI shows as "First bus".
+        local_now = now.astimezone(self._service_tz)
+        now_seconds = local_now.hour * 3600 + local_now.minute * 60 + local_now.second
+        schedule_rows = db.execute(
+            query.where(StopTime.arrival_seconds >= now_seconds - UPCOMING_GRACE_SECONDS).limit(25)
+        ).all()
+        if not schedule_rows:
+            schedule_rows = db.execute(query.limit(25)).all()
         latest_updates = self._latest_trip_updates(db, stop_id)
-        latest_vehicles = self._latest_vehicles(db, stop_id)
+        latest_vehicles = self._latest_vehicles(db, [trip.trip_id for _, trip, _ in schedule_rows], now)
         trip_schedule_seconds = self._trip_schedule_seconds(db, [trip.id for _, trip, _ in schedule_rows])
 
         items: list[EtaItem] = []
@@ -76,6 +88,12 @@ class ETAPredictor:
             scheduled_arrival = scheduled_seconds_to_datetime(now, stop_time.arrival_seconds, self._service_tz)
             trip_update = latest_updates.get(trip.trip_id)
             vehicle = latest_vehicles.get(trip.trip_id)
+            if (
+                vehicle is not None
+                and vehicle.current_stop_sequence is not None
+                and vehicle.current_stop_sequence > stop_time.stop_sequence
+            ):
+                continue  # this bus has already passed the stop
             delay_seconds = trip_update.delay_seconds if trip_update and trip_update.delay_seconds is not None else None
 
             if delay_seconds is None and vehicle:
@@ -229,21 +247,27 @@ class ETAPredictor:
         return latest
 
     @staticmethod
-    def _latest_vehicles(db: Session, stop_id: str) -> dict[str, VehicleState]:
+    def _latest_vehicles(db: Session, trip_ids: list[str], now: datetime) -> dict[str, VehicleState]:
+        """Latest stop-matched position of each trip's bus, wherever it is on the route."""
+        if not trip_ids:
+            return {}
         rows = (
             db.execute(
                 select(VehicleState)
-                .where(VehicleState.stop_id == stop_id, VehicleState.trip_id.is_not(None))
+                .where(
+                    VehicleState.trip_id.in_(trip_ids),
+                    VehicleState.current_stop_sequence.is_not(None),
+                    VehicleState.observed_at >= now - timedelta(seconds=VEHICLE_MAX_AGE_SECONDS),
+                )
                 .order_by(desc(VehicleState.observed_at))
-                .limit(200)
+                .limit(500)
             )
             .scalars()
             .all()
         )
         latest: dict[str, VehicleState] = {}
         for row in rows:
-            if row.trip_id:
-                latest.setdefault(row.trip_id, row)
+            latest.setdefault(row.trip_id, row)
         return latest
 
     @staticmethod
