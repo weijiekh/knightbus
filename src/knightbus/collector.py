@@ -98,13 +98,15 @@ class GTFSCollector:
         feed_name = self.feed.name
 
         # Delete only data for this feed (same transaction as the inserts below)
+        # synchronize_session=False: the default would fetch every deleted id into
+        # memory (145 MB for one feed), enough to OOM the 128m worker.
         trip_ids = select(Trip.id).where(Trip.feed_name == feed_name)
-        db.execute(delete(StopTime).where(StopTime.trip_id_ref.in_(trip_ids)))
-        db.execute(delete(Trip).where(Trip.feed_name == feed_name))
-        db.execute(delete(Route).where(Route.feed_name == feed_name))
-        db.execute(delete(Stop).where(Stop.feed_name == feed_name))
-        db.execute(delete(ServiceCalendar).where(ServiceCalendar.feed_name == feed_name))
-        db.execute(delete(CalendarDate).where(CalendarDate.feed_name == feed_name))
+        db.execute(delete(StopTime).where(StopTime.trip_id_ref.in_(trip_ids)).execution_options(synchronize_session=False))
+        db.execute(delete(Trip).where(Trip.feed_name == feed_name).execution_options(synchronize_session=False))
+        db.execute(delete(Route).where(Route.feed_name == feed_name).execution_options(synchronize_session=False))
+        db.execute(delete(Stop).where(Stop.feed_name == feed_name).execution_options(synchronize_session=False))
+        db.execute(delete(ServiceCalendar).where(ServiceCalendar.feed_name == feed_name).execution_options(synchronize_session=False))
+        db.execute(delete(CalendarDate).where(CalendarDate.feed_name == feed_name).execution_options(synchronize_session=False))
 
         # Stream every CSV and bulk insert with Core in batches so memory stays flat.
         with zipfile.ZipFile(io.BytesIO(payload.payload)) as archive:
