@@ -111,6 +111,14 @@ class CalendarDate(Base):
     exception_type: Mapped[int] = mapped_column(Integer)  # 1=added, 2=removed
 
 
+class StaticFeedState(Base):
+    __tablename__ = "static_feed_state"
+
+    feed_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class RawSnapshot(Base):
     __tablename__ = "raw_snapshots"
 
@@ -123,9 +131,6 @@ class RawSnapshot(Base):
 
 class VehicleState(Base):
     __tablename__ = "vehicle_states"
-    __table_args__ = (
-        Index("ix_vehicle_states_lookup", "stop_id", "trip_id", "observed_at"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
