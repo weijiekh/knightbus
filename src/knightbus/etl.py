@@ -78,7 +78,7 @@ class ETLService:
             targets.append((RawSnapshot, RawSnapshot.fetched_at < now - timedelta(days=raw_days)))
         deleted = 0
         for model, condition in targets:
-            deleted += db.execute(delete(model).where(condition)).rowcount or 0
+            deleted += db.execute(delete(model).where(condition).execution_options(synchronize_session=False)).rowcount or 0
         db.commit()
         return deleted
 
