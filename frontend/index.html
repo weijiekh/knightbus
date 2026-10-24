@@ -2,8 +2,17 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>whereismybus — Live Bus ETAs</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>manaBas — Live Bus ETAs</title>
+<meta name="description" content="Live RapidKL bus ETAs by stop.">
+<meta name="theme-color" content="#0c0c10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="manaBas">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -615,6 +624,24 @@ main {
 .moon-icon { display: block; }
 [data-theme="light"] .sun-icon  { display: block; }
 [data-theme="light"] .moon-icon { display: none; }
+
+/* ══════════════════════════════════════════════
+   LARGER SCREENS
+   ══════════════════════════════════════════════ */
+header { padding-top: max(12px, env(safe-area-inset-top)); }
+@media (min-width: 900px) {
+  header { padding-left: calc(max(0px, (100vw - 1120px) / 2) + 16px); padding-right: calc(max(0px, (100vw - 1120px) / 2) + 16px); }
+  .search-section, main { max-width: 1120px; }
+  .search-section { padding-top: 22px; }
+  .search-wrap { max-width: 640px; }
+  .logo-icon { width: 40px; height: 40px; }
+  .logo-wordmark { font-size: 18px; }
+  .cards-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; align-items: start; }
+}
+@media (min-width: 1400px) {
+  .search-section, main { max-width: 1320px; }
+  header { padding-left: calc(max(0px, (100vw - 1320px) / 2) + 16px); padding-right: calc(max(0px, (100vw - 1320px) / 2) + 16px); }
+}
 </style>
 </head>
 <body>
@@ -622,28 +649,8 @@ main {
 <!-- ══════════ HEADER ══════════ -->
 <header>
   <a class="logo" href="#">
-    <!-- Bus + clock icon -->
-    <svg class="logo-icon" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="36" height="36" rx="10" fill="var(--accent)"/>
-      <!-- Bus body -->
-      <rect x="3" y="12" width="24" height="14" rx="2.5" fill="#0c1a08"/>
-      <!-- Windows -->
-      <rect x="6"  y="14.5" width="4.5" height="4" rx="1" fill="var(--accent)" opacity="0.9"/>
-      <rect x="12" y="14.5" width="4.5" height="4" rx="1" fill="var(--accent)" opacity="0.9"/>
-      <rect x="18" y="14.5" width="4.5" height="4" rx="1" fill="var(--accent)" opacity="0.9"/>
-      <!-- Waistline -->
-      <rect x="3" y="19.5" width="24" height="1" fill="var(--accent)" opacity="0.2"/>
-      <!-- Wheels -->
-      <circle cx="9"  cy="26" r="3" fill="#0c1a08" stroke="var(--accent)" stroke-width="1.5"/>
-      <circle cx="9"  cy="26" r="1" fill="var(--accent)"/>
-      <circle cx="21" cy="26" r="3" fill="#0c1a08" stroke="var(--accent)" stroke-width="1.5"/>
-      <circle cx="21" cy="26" r="1" fill="var(--accent)"/>
-      <!-- Clock badge (bottom-right corner) -->
-      <circle cx="28" cy="24" r="6" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5"/>
-      <line x1="28" y1="21.5" x2="28" y2="24" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
-      <line x1="28" y1="24" x2="30" y2="25.2" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
-    </svg>
-    <span class="logo-wordmark">whereismybus</span>
+    <img class="logo-icon" src="/icon.svg" alt="" width="36" height="36">
+    <span class="logo-wordmark">mana<em>Bas</em></span>
   </a>
 
   <div class="header-actions">
@@ -1102,6 +1109,11 @@ function esc(str) {
   return String(str)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 }
 </script>
 </body>
