@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from knightbus.db import Base
@@ -36,6 +36,9 @@ class Stop(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+Index("ix_stops_lower_name", func.lower(Stop.name))
 
 
 class Trip(Base):
@@ -108,6 +111,14 @@ class CalendarDate(Base):
     exception_type: Mapped[int] = mapped_column(Integer)  # 1=added, 2=removed
 
 
+class StaticFeedState(Base):
+    __tablename__ = "static_feed_state"
+
+    feed_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class RawSnapshot(Base):
     __tablename__ = "raw_snapshots"
 
@@ -120,9 +131,6 @@ class RawSnapshot(Base):
 
 class VehicleState(Base):
     __tablename__ = "vehicle_states"
-    __table_args__ = (
-        Index("ix_vehicle_states_lookup", "stop_id", "trip_id", "observed_at"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

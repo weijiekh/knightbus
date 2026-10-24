@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from knightbus.collector import FeedPayload, GTFSCollector
 from knightbus.config import FeedConfig
 from knightbus.db import Base
-from knightbus.models import CalendarDate, Route, ServiceCalendar, Stop, StopTime, Trip
+from knightbus.models import CalendarDate, RawSnapshot, Route, ServiceCalendar, Stop, StopTime, Trip
 
 FILES = {
     "routes.txt": "route_id,route_short_name,route_long_name,route_type\nR1,1,Line One,3\nR2,2,Line Two,3\n",
@@ -146,3 +146,17 @@ def test_multi_batch_inserts(monkeypatch) -> None:
     db = build_session()
     collector("kl").load_static_feed(db, make_payload())
     assert_original_rows(db)
+
+
+def test_static_unchanged_after_load_and_changed_for_new_archive() -> None:
+    db = build_session()
+    kl = collector("kl")
+    payload = make_payload()
+    assert not kl.static_unchanged(db, payload)
+
+    kl.load_static_feed(db, payload)
+
+    assert kl.static_unchanged(db, payload)
+    assert not collector("penang").static_unchanged(db, payload)
+    assert not kl.static_unchanged(db, make_payload_with({"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\nS9,Nine,3.0,101.0\n"}))
+    assert db.execute(select(func.count()).select_from(RawSnapshot)).scalar_one() == 0
