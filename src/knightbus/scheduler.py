@@ -10,6 +10,7 @@ from knightbus.config import Settings, get_settings
 from knightbus.db import Base, SessionLocal, engine
 from knightbus.etl import ETLService
 from knightbus.logging import configure_logging
+from knightbus.migrations import apply_migrations
 from knightbus.training import TrainingService
 
 logger = logging.getLogger(__name__)
@@ -82,9 +83,13 @@ def refresh_static() -> None:
         collector = GTFSCollector(feed)
         with SessionLocal() as db:
             payload = collector.fetch_static()
-            if payload:
-                collector.load_static_feed(db, payload)
-                logger.info("refreshed GTFS static feed", extra={"feed": feed.name})
+            if not payload:
+                continue
+            if collector.static_unchanged(db, payload):
+                logger.info("GTFS static feed unchanged, skipping", extra={"feed": feed.name})
+                continue
+            collector.load_static_feed(db, payload)
+            logger.info("refreshed GTFS static feed", extra={"feed": feed.name})
 
 
 def refresh_features() -> None:
@@ -137,6 +142,7 @@ def register_jobs(scheduler: BaseScheduler, settings: Settings) -> None:
 def main() -> None:
     configure_logging()
     Base.metadata.create_all(bind=engine)
+    apply_migrations(engine)
     settings = get_settings()
 
     scheduler = BlockingScheduler(timezone="UTC")

@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import zipfile
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 from google.transit import gtfs_realtime_pb2 as gtfs_rt
 
 from knightbus.config import FeedConfig, get_settings
-from knightbus.models import CalendarDate, RawSnapshot, Route, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.models import CalendarDate, RawSnapshot, Route, ServiceCalendar, StaticFeedState, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
 
 STOP_MATCH_RADIUS_METERS = 200.0
@@ -67,8 +68,12 @@ class GTFSCollector:
         )
         db.commit()
 
+    def static_unchanged(self, db: Session, payload: FeedPayload) -> bool:
+        """True when this exact archive was already loaded for this feed."""
+        known = db.get(StaticFeedState, self.feed.name)
+        return known is not None and known.sha256 == hashlib.sha256(payload.payload).hexdigest()
+
     def load_static_feed(self, db: Session, payload: FeedPayload) -> None:
-        self.persist_raw_snapshot(db, "static", payload)
         feed_name = self.feed.name
 
         # Validate before deleting so a bad archive never wipes existing data.
@@ -79,6 +84,11 @@ class GTFSCollector:
 
         try:
             self._replace_static_data(db, payload)
+            db.merge(StaticFeedState(
+                feed_name=feed_name,
+                sha256=hashlib.sha256(payload.payload).hexdigest(),
+                loaded_at=payload.fetched_at,
+            ))
         except Exception:
             db.rollback()
             raise
