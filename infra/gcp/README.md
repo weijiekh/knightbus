@@ -1,8 +1,8 @@
 # Knightbus on the shared GCP e2-micro
 
-Mirrors caruma's `infra/gcp` layout. `db`, `api` and `worker` run in Docker
+Mirrors caruma's `infra/gcp` layout. `db` and `api` run in Docker
 (`infra/gcp/compose.yaml`, project `knightbus`) on the shared 1 GB VM behind the
-host nginx. Memory budget: 336 MB (`db` 112, `api` 112, `worker` 112, each with
+host nginx. Memory budget: 272 MB (`db` 112, `api` 160; the API process also runs the scheduler, each with
 `memswap_limit` equal to `mem_limit`). Host ports: Postgres `127.0.0.1:5433`,
 API `127.0.0.1:8100`; nothing is bound on `0.0.0.0`. The frontend lives on
 Cloudflare Pages and calls the API through a Pages Function.
@@ -114,8 +114,7 @@ wrangler, no Git integration needed). Set env var
 
 ## 5. CI/CD
 
-First deploy: if the pull from GHCR fails with 403, link the `knightbus-api` and
-`knightbus-worker` packages to the repo (GitHub package settings -> Manage
+First deploy: if the pull from GHCR fails with 403, link the `knightbus-api` package to the repo (GitHub package settings -> Manage
 Actions access -> add the repo, role Read).
 
 - `ci.yml` (PRs and pushes to `main`): path-filtered tests. Python tests run when
@@ -124,24 +123,24 @@ Actions access -> add the repo, role Read).
 - `deploy.yml` (push to `main`, or manual dispatch which deploys both halves):
   - `web`: `wrangler pages deploy` of `frontend/` when `frontend/**` changed.
   - `image`: builds `ghcr.io/weijiekh/knightbus-api` (`ML_DEPS=inference`) and
-    `knightbus-worker` (`ML_DEPS=none`), tagged with the commit SHA and `latest`,
+    (the old `knightbus-worker` image is no longer built), tagged with the commit SHA and `latest`,
     when `src/**`, `Dockerfile`, `pyproject.toml`, `uv.lock` or `infra/gcp/**`
     changed. Nothing is built on the VM.
   - `api`: SSHes in as `<app-user>`, resets `~/knightbus` to `origin/main`,
     writes the SHA to `API_TAG` in `infra/gcp/.env`, pulls with a job-scoped
-    token, runs `up -d --remove-orphans db api worker`, keeps the newest 4 tags
+    token, runs `up -d --remove-orphans db api` (this also removes the old `knightbus-worker` container), keeps the newest 4 tags
     per knightbus image, then polls `127.0.0.1:8100/v1/health` (dumping
     `knightbus-api` logs on failure).
   - `verify`: fetches `/v1/health` and the SPA root through Pages.
 - Manual runs on the VM: `cd ~/knightbus/infra/gcp && docker compose ps`. The
   deployed tag is in `.env`, so a manual `up -d` keeps the same images.
 - Rollback: set `API_TAG` in `infra/gcp/.env` to an older SHA still on the box and
-  `docker compose up -d api worker`, or re-run the Deploy workflow for that commit.
+  `docker compose up -d api`, or re-run the Deploy workflow for that commit.
 - Check memory with `docker stats --no-stream` and OOM kills with
   `docker inspect -f '{{.State.OOMKilled}}' knightbus-api`. If `api` hits its
-  limit, raise it to 160m and lower `worker`, keeping the 336 MB total. Measured locally with
-  the three KL/MRT/Penang feeds: db ~85 MB, api ~70 MB, worker ~68 MB (static reload
-  included), so each cap has about 40% headroom. Do not run it beside more than
+  limit, raise it to 192m, keeping the total under ~300 MB. Measured locally with
+  the three KL/MRT/Penang feeds: db ~85 MB, api with the embedded scheduler ~77 MB steady and ~90 MB peak
+  during the static reload. Do not run it beside more than
   caruma + krappa on a 1 GB host.
 
 ## 6. Ephemeral IP warning

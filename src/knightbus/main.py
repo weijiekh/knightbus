@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -14,7 +15,20 @@ from knightbus.schemas import HealthResponse, SearchResponse, StopEtaResponse, S
 
 configure_logging()
 
-app = FastAPI(title="Knightbus API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    scheduler = None
+    if get_settings().embedded_scheduler:
+        # Imported here so a plain API process never loads the scheduler stack.
+        from knightbus.scheduler import start_background_scheduler
+
+        scheduler = start_background_scheduler()
+    yield
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="Knightbus API", version="0.1.0", lifespan=lifespan)
 predictor = ETAPredictor()
 
 

@@ -76,8 +76,6 @@ jobs:
         include:
           - name: api
             ml_deps: inference
-          - name: worker
-            ml_deps: none
     steps:
       - uses: actions/checkout@v4
 
@@ -103,7 +101,7 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
   api:
-    name: Deploy API and worker to GCP e2-micro
+    name: Deploy API to GCP e2-micro
     needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -149,10 +147,10 @@ jobs:
           sed -i "s/^API_TAG=.*/API_TAG=${API_TAG}/" .env
 
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-          docker compose pull api worker
+          docker compose pull api
           docker logout ghcr.io
 
-          docker compose up -d --remove-orphans db api worker
+          docker compose up -d --remove-orphans db api
           docker image prune -f >/dev/null
           # Old tags aren't dangling, so prune -f keeps them. Keep the
           # newest 4 tags per image (about 3 images, as :latest shares one)
