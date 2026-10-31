@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     training_in_worker: bool = Field(default=True, alias="TRAINING_IN_WORKER")
     model_artifact_path: str = Field(default="artifacts/eta_lgbm.pkl", alias="MODEL_ARTIFACT_PATH")
     realtime_retention_days: int = Field(default=14, alias="REALTIME_RETENTION_DAYS")
+    db_pool_size: int = Field(default=3, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=2, alias="DB_MAX_OVERFLOW")
     persist_raw_snapshots: bool = Field(default=False, alias="PERSIST_RAW_SNAPSHOTS")
     raw_snapshot_retention_days: int = Field(default=1, alias="RAW_SNAPSHOT_RETENTION_DAYS")
 

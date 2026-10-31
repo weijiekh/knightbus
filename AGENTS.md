@@ -48,7 +48,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Frontend: Cloudflare Pages (`manabas.pages.dev`, fallback `basmana.pages.dev`); `frontend/functions/v1/[[path]].js` proxies `/v1/*` to Pages env `API_ORIGIN`
 - Training: `.github/workflows/train.yml` runs weekly (Mon 03:00 MYT) and via `workflow_dispatch`; worker training is off on GCP (`TRAINING_IN_WORKER=false`)
 - Dockerfile build arg `ML_DEPS=full|inference|none` (GCP: `api` inference, `worker` none)
-- New env vars: `PERSIST_RAW_SNAPSHOTS` (default false; nothing reads `raw_snapshots`), `TRAINING_IN_WORKER` (default true), `REALTIME_RETENTION_DAYS` (14), `RAW_SNAPSHOT_RETENTION_DAYS` (1), `POSTGRES_PASSWORD`, `API_TAG` (deployed image SHA)
+- New env vars: `PERSIST_RAW_SNAPSHOTS` (default false; nothing reads `raw_snapshots`), `DB_POOL_SIZE` (3) / `DB_MAX_OVERFLOW` (2), `TRAINING_IN_WORKER` (default true), `REALTIME_RETENTION_DAYS` (14), `RAW_SNAPSHOT_RETENTION_DAYS` (1), `POSTGRES_PASSWORD`, `API_TAG` (deployed image SHA)
 - Legacy EC2: `deploy/README.md` and `deploy/ec2-user-data.sh` still work with `docker compose --profile web`
 - Update a legacy EC2 instance with `deploy/update.sh` (not used on GCP)
 - CI/CD: `.github/workflows/ci.yml` runs path-filtered tests; `deploy.yml` on push to `main` (path-filtered web/api): wrangler Pages deploy, ghcr api/worker images built in Actions, `appleboy/ssh-action` deploy as the app user in `~/knightbus/infra/gcp` (never build on the VM); secrets `DEPLOY_HOST/USER/SSH_KEY`, `CLOUDFLARE_API_TOKEN/ACCOUNT_ID`, var `PAGES_PROJECT` in env `production`

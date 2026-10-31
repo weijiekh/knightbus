@@ -26,8 +26,14 @@ services:
       postgres
       -c shared_buffers=32MB
       -c work_mem=2MB
-      -c maintenance_work_mem=32MB
-      -c max_connections=15
+      -c maintenance_work_mem=16MB
+      -c max_connections=10
+      -c superuser_reserved_connections=2
+      -c autovacuum_max_workers=2
+      -c autovacuum_work_mem=16MB
+      -c wal_buffers=1MB
+      -c max_wal_size=256MB
+      -c track_activity_query_size=512
       -c effective_cache_size=128MB
     volumes:
       - pgdata:/var/lib/postgresql/data
