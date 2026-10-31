@@ -58,6 +58,9 @@ class GTFSCollector:
 
     @staticmethod
     def persist_raw_snapshot(db: Session, feed_type: str, payload: FeedPayload) -> None:
+        # Nothing reads these back; storing every poll was the biggest DB write load.
+        if not get_settings().persist_raw_snapshots:
+            return
         db.add(
             RawSnapshot(
                 feed_type=feed_type,
