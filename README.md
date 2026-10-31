@@ -285,7 +285,7 @@ The current data.gov.my GTFS-realtime documentation for Prasarana states that ve
 ## Default deployment shape
 
 - Shared GCP e2-micro (1 GB), Docker Compose: `infra/gcp/compose.yaml` (prebuilt images, deployed by `.github/workflows/deploy.yml`). Runbook: `infra/gcp/README.md`
-- One Postgres instance, one API process, one worker process using APScheduler (each with a `mem_limit`)
+- One Postgres instance and one API process that also runs APScheduler (`EMBEDDED_SCHEDULER=true`; each with a `mem_limit`). Local `docker compose` still uses a separate `worker`
 - Frontend on Cloudflare Pages, calling the API through a Pages Function
-- Weekly model training in GitHub Actions (`.github/workflows/train.yml`), not in the worker
+- Weekly model training in GitHub Actions (`.github/workflows/train.yml`), not in the API/worker
 - No Redis, Celery, Airflow, or Kubernetes in v1

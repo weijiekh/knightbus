@@ -1,11 +1,11 @@
 # Knightbus production on a shared GCP e2-micro (1 GB RAM), mirroring caruma.
 #
 # Memory caps keep one service from starving the others on the box (db 112m +
-# api 112m + worker 112m = 336m). Postgres and the API are published on
+# api 160m, which also runs the scheduler = 272m). Postgres and the API are published on
 # 127.0.0.1 only: the API for nginx, Postgres for the weekly training job's
 # SSH tunnel.
 #
-#   docker compose up -d db api worker
+#   docker compose up -d db api
 #
 # Values come from .env next to this file (written by bootstrap.sh).
 # Images are built in GitHub Actions and pulled here; nothing builds on the VM.
@@ -61,6 +61,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/knightbus
       MALLOC_ARENA_MAX: "2"
+      # The scheduler runs inside the API process: one Python runtime instead of
+      # two. Training stays in GitHub Actions (this image has no pandas/sklearn).
+      EMBEDDED_SCHEDULER: "true"
     ports:
       - "127.0.0.1:8100:56709"
     # Written by the training job (as knightbus-ci) over SSH; the API
@@ -69,33 +72,14 @@ services:
       - ${ARTIFACTS_DIR:-/opt/knightbus/artifacts}:/app/artifacts:ro
     # No swap beyond the cap: a runaway process is OOM-killed here instead of
     # stalling the shared host.
-    mem_limit: 112m
-    memswap_limit: 112m
+    mem_limit: 160m
+    memswap_limit: 160m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:56709/v1/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  worker:
-    image: ${WORKER_IMAGE:-ghcr.io/weijiekh/knightbus-worker}:${API_TAG:-latest}
-    container_name: knightbus-worker
-    restart: unless-stopped
-    command: python -m knightbus.scheduler
-    depends_on:
-      db:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/knightbus
-      # Training runs weekly in GitHub Actions, not on this box.
-      TRAINING_IN_WORKER: "false"
-      MALLOC_ARENA_MAX: "2"
-    volumes:
-      - ${ARTIFACTS_DIR:-/opt/knightbus/artifacts}:/app/artifacts
-    mem_limit: 112m
-    memswap_limit: 112m
 
 volumes:
   pgdata:

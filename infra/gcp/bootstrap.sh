@@ -8,15 +8,15 @@
 #           DOMAIN=knightbus.<vm-ip>.sslip.io SPA_ORIGIN=https://manabas.pages.dev \
 #               sudo -E bash ~/knightbus/infra/gcp/bootstrap.sh
 #
-# Postgres, the API and the worker run in Docker (infra/gcp/compose.yaml) with
+# Postgres and the API (with the embedded scheduler) run in Docker (infra/gcp/compose.yaml) with
 # memory caps. nginx and certbot stay on the host for TLS. The SPA lives on
 # Cloudflare Pages, which proxies /v1/* here (frontend/functions/v1).
 # DOMAIN is the VM's sslip.io name. It must be a subdomain such as
 # knightbus.<vm-ip>.sslip.io, because the bare <vm-ip>.sslip.io host is served
 # by caruma's nginx site.
 #
-# The API/worker images are private on GHCR. Bootstrap brings up Postgres; the
-# first CI deploy pulls the images and starts the API and worker.
+# The API image is private on GHCR. Bootstrap brings up Postgres; the
+# first CI deploy pulls the images and starts the API.
 #
 # APP_USER defaults to the account that invoked sudo. It owns the checkout
 # (/home/$APP_USER/knightbus) and is the account CI deploys as.
@@ -129,8 +129,8 @@ if ! id "$CI_USER" >/dev/null 2>&1; then
 fi
 gpasswd -d "$CI_USER" docker >/dev/null 2>&1 || true
 install -d -m 700 -o "$CI_USER" -g "$CI_USER" "/home/${CI_USER}/.ssh"
-# Writable by knightbus-ci (training upload), world-readable so the api and
-# worker containers (bind mount of this path) can load the model.
+# Writable by knightbus-ci (training upload), world-readable so the api
+# container (bind mount of this path) can load the model.
 install -d -m 755 -o "$CI_USER" -g "$CI_USER" "$ARTIFACTS_DIR"
 chmod 755 "$ARTIFACTS_DIR"
 
