@@ -257,3 +257,19 @@ def test_vehicle_elsewhere_on_the_trip_sets_delay_and_passed_bus_is_dropped() ->
 
     assert live and live[0].vehicle_id == "v-live" and live[0].prediction_source == "heuristic"
     assert gone == []
+
+
+def test_nearby_stops_filters_by_radius_and_sorts_by_distance() -> None:
+    session = build_session()
+    session.add_all([
+        Stop(stop_id="near", name="Near", lat=3.1400, lon=101.6900),
+        Stop(stop_id="mid", name="Mid", lat=3.1420, lon=101.6900),
+        Stop(stop_id="far", name="Far", lat=3.2000, lon=101.7500),
+        Stop(stop_id="nocoords", name="None"),
+    ])
+    session.commit()
+
+    results = ETAPredictor().get_nearby_stops(session, lat=3.1400, lon=101.6900, radius_m=500.0)
+
+    assert [r.stop_id for r in results] == ["near", "mid"]
+    assert results[0].distance_m == 0.0

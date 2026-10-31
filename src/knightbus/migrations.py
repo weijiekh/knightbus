@@ -14,6 +14,8 @@ MIGRATIONS: tuple[str, ...] = (
     "DROP INDEX IF EXISTS ix_vehicle_states_feed_name",
     "DROP INDEX IF EXISTS ix_vehicle_states_vehicle_id",
     "DROP INDEX IF EXISTS ix_vehicle_states_stop_id",
+    # create_all won't add an index to an existing table.
+    "CREATE INDEX IF NOT EXISTS ix_stops_lat_lon ON stops (lat, lon)",
 )
 
 

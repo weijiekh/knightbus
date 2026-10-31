@@ -39,6 +39,7 @@ class Stop(Base):
 
 
 Index("ix_stops_lower_name", func.lower(Stop.name))
+Index("ix_stops_lat_lon", Stop.lat, Stop.lon)  # nearby-stops bounding box
 
 
 class Trip(Base):
