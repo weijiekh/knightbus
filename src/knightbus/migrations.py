@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 MIGRATIONS: tuple[str, ...] = (
     # 94 MB, never scanned; single-column indexes cover the predictor lookups.
     "DROP INDEX IF EXISTS ix_vehicle_states_lookup",
+    # Never used as a filter on their own; each is tens of MB competing for the
+    # db container's page cache. The hot lookups use trip_id, route_id, observed_at.
+    "DROP INDEX IF EXISTS ix_vehicle_states_feed_name",
+    "DROP INDEX IF EXISTS ix_vehicle_states_vehicle_id",
+    "DROP INDEX IF EXISTS ix_vehicle_states_stop_id",
 )
 
 

@@ -133,11 +133,13 @@ class VehicleState(Base):
     __tablename__ = "vehicle_states"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    vehicle_id: Mapped[str] = mapped_column(String(128), index=True)
+    # Only trip_id, route_id and observed_at are queried; every extra index on
+    # this hot insert table costs cache and write memory.
+    feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vehicle_id: Mapped[str] = mapped_column(String(128))
     trip_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
     route_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
-    stop_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    stop_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     current_stop_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     current_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
