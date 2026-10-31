@@ -17,7 +17,13 @@ from knightbus.utils import haversine_meters, parse_gtfs_time_to_seconds
 
 STOP_MATCH_RADIUS_METERS = 200.0
 STATIC_INSERT_BATCH_SIZE = 1000
+STOP_CACHE_MAX_ENTRIES = 256
 REQUIRED_STATIC_FILES = ("routes.txt", "stops.txt", "trips.txt", "stop_times.txt")
+
+
+# Candidate stops per trip/route survive across polls (the same buses report every
+# 30 s); capped so it cannot grow unbounded and cleared whenever static data reloads.
+_STOP_CANDIDATES: dict[tuple[str, str | None, str], list[tuple[str, int, float, float]]] = {}
 
 
 @dataclass
@@ -96,6 +102,7 @@ class GTFSCollector:
             db.rollback()
             raise
         db.commit()
+        _STOP_CANDIDATES.clear()
 
     def _replace_static_data(self, db: Session, payload: FeedPayload) -> None:
         feed_name = self.feed.name
@@ -226,12 +233,14 @@ class GTFSCollector:
         feed = gtfs_rt.FeedMessage()
         feed.ParseFromString(payload.payload)
 
-        route_stops_cache: dict[tuple[str, str | None, str], list[tuple[str, int, float, float]]] = {}
+        if len(_STOP_CANDIDATES) > STOP_CACHE_MAX_ENTRIES:
+            _STOP_CANDIDATES.clear()
+        route_stops_cache = _STOP_CANDIDATES
         last_seen = self.latest_vehicle_timestamps(
             db, self.feed.name, since=payload.fetched_at - timedelta(hours=1)
         )
 
-        inserted = 0
+        rows: list[dict[str, Any]] = []
         for entity in feed.entity:
             if not entity.HasField("vehicle"):
                 continue
@@ -259,27 +268,27 @@ class GTFSCollector:
                 if matched:
                     stop_id, stop_seq = matched
 
-            db.add(
-                VehicleState(
-                    feed_name=self.feed.name,
-                    vehicle_id=vehicle_id,
-                    trip_id=vehicle.trip.trip_id or None,
-                    route_id=route_id,
-                    stop_id=stop_id,
-                    current_stop_sequence=stop_seq,
-                    current_status=gtfs_rt.VehiclePosition.VehicleStopStatus.Name(vehicle.current_status)
-                    if vehicle.current_status is not None
-                    else None,
-                    lat=lat,
-                    lon=lon,
-                    timestamp_unix=timestamp_unix,
-                    observed_at=payload.fetched_at,
-                )
-            )
-            inserted += 1
+            rows.append({
+                "feed_name": self.feed.name,
+                "vehicle_id": vehicle_id,
+                "trip_id": trip_id,
+                "route_id": route_id,
+                "stop_id": stop_id,
+                "current_stop_sequence": stop_seq,
+                "current_status": gtfs_rt.VehiclePosition.VehicleStopStatus.Name(vehicle.current_status)
+                if vehicle.current_status is not None
+                else None,
+                "lat": lat,
+                "lon": lon,
+                "timestamp_unix": timestamp_unix,
+                "observed_at": payload.fetched_at,
+            })
 
+        # Core bulk insert: no ORM objects held until commit.
+        if rows:
+            db.execute(insert(VehicleState), rows)
         db.commit()
-        return inserted
+        return len(rows)
 
     @staticmethod
     def _stops_where(db: Session, *conditions: Any) -> list[tuple[str, int, float, float]]:
@@ -317,7 +326,7 @@ class GTFSCollector:
                 )
             candidates = cache[key]
         if not candidates and route_id:
-            key = ("route", None, route_id)
+            key = ("route", feed_name, route_id)
             if key not in cache:
                 cache[key] = GTFSCollector._stops_where(db, Trip.route_id == route_id)
             candidates = cache[key]
