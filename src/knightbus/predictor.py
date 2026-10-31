@@ -1,4 +1,5 @@
 import logging
+from math import cos, radians
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -208,16 +209,25 @@ class ETAPredictor:
     def get_nearby_stops(
         self, db: Session, lat: float, lon: float, radius_m: float = 500.0, limit: int = 5
     ) -> list[StopResponse]:
-        stops = db.execute(select(Stop).where(Stop.lat.is_not(None), Stop.lon.is_not(None))).scalars().all()
+        # Bounding box in SQL, narrow columns: loading every Stop as an ORM
+        # object per request was the API's biggest allocation.
+        lat_delta = radius_m / 111_320.0
+        lon_delta = lat_delta / max(cos(radians(lat)), 0.01)
+        stops = db.execute(
+            select(Stop.stop_id, Stop.name, Stop.lat, Stop.lon).where(
+                Stop.lat.between(lat - lat_delta, lat + lat_delta),
+                Stop.lon.between(lon - lon_delta, lon + lon_delta),
+            )
+        ).all()
         results = []
-        for stop in stops:
-            dist = haversine_meters(lat, lon, stop.lat, stop.lon)  # type: ignore[arg-type]
+        for stop_id, name, stop_lat, stop_lon in stops:
+            dist = haversine_meters(lat, lon, stop_lat, stop_lon)
             if dist <= radius_m:
                 results.append(StopResponse(
-                    stop_id=stop.stop_id,
-                    name=stop.name,
-                    lat=stop.lat,
-                    lon=stop.lon,
+                    stop_id=stop_id,
+                    name=name,
+                    lat=stop_lat,
+                    lon=stop_lon,
                     distance_m=round(dist, 1),
                 ))
         results.sort(key=lambda s: s.distance_m or 0)

@@ -2,7 +2,7 @@
 
 Mirrors caruma's `infra/gcp` layout. `db`, `api` and `worker` run in Docker
 (`infra/gcp/compose.yaml`, project `knightbus`) on the shared 1 GB VM behind the
-host nginx. Memory budget: 448 MB (`db` 128, `api` 192, `worker` 128, each with
+host nginx. Memory budget: 336 MB (`db` 112, `api` 112, `worker` 112, each with
 `memswap_limit` equal to `mem_limit`). Host ports: Postgres `127.0.0.1:5433`,
 API `127.0.0.1:8100`; nothing is bound on `0.0.0.0`. The frontend lives on
 Cloudflare Pages and calls the API through a Pages Function.
@@ -139,7 +139,10 @@ Actions access -> add the repo, role Read).
   `docker compose up -d api worker`, or re-run the Deploy workflow for that commit.
 - Check memory with `docker stats --no-stream` and OOM kills with
   `docker inspect -f '{{.State.OOMKilled}}' knightbus-api`. If `api` hits its
-  limit, raise it to 256m and lower `worker`, keeping the 448 MB total.
+  limit, raise it to 160m and lower `worker`, keeping the 336 MB total. Measured locally with
+  the three KL/MRT/Penang feeds: db ~85 MB, api ~70 MB, worker ~68 MB (static reload
+  included), so each cap has about 40% headroom. Do not run it beside more than
+  caruma + krappa on a 1 GB host.
 
 ## 6. Ephemeral IP warning
 

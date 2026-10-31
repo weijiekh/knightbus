@@ -23,7 +23,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Schema: `create_all` only adds missing tables; index drops/other DDL go in `src/knightbus/migrations.py` (idempotent, run at worker startup). Static GTFS reload is skipped when the zip sha256 matches `static_feed_state`; static zips are not stored in `raw_snapshots`
 - Keep training code isolated so it can stay optional in low-cost deployments
 - Model artifact is a LightGBM booster string; the API predicts without pandas/sklearn
-- Static GTFS ingest streams with batched Core inserts (1000 rows); GCP `mem_limit`s are db 128m, api 192m, worker 128m
+- Static GTFS ingest streams with batched Core inserts (1000 rows); GCP `mem_limit`s are db 112m, api 112m, worker 112m (measured ~85/70/68 MB)
 - ML training requires at least 5,000 labeled rows (ideally 1–2 weeks of vehicle position history) before activating
 - Training is skipped if the newest data is older than 48 hours to prevent stale models
 - Training metrics include per-route and per-stop coverage; check `routes_below_100` and `stops_below_50` to identify under-represented categories
@@ -48,7 +48,7 @@ This repo contains the Knightbus RapidKL ETA backend. Favor small, production-us
 - Frontend: Cloudflare Pages (`manabas.pages.dev`, fallback `basmana.pages.dev`); `frontend/functions/v1/[[path]].js` proxies `/v1/*` to Pages env `API_ORIGIN`
 - Training: `.github/workflows/train.yml` runs weekly (Mon 03:00 MYT) and via `workflow_dispatch`; worker training is off on GCP (`TRAINING_IN_WORKER=false`)
 - Dockerfile build arg `ML_DEPS=full|inference|none` (GCP: `api` inference, `worker` none)
-- New env vars: `TRAINING_IN_WORKER` (default true), `REALTIME_RETENTION_DAYS` (14), `RAW_SNAPSHOT_RETENTION_DAYS` (1), `POSTGRES_PASSWORD`, `API_TAG` (deployed image SHA)
+- New env vars: `PERSIST_RAW_SNAPSHOTS` (default false; nothing reads `raw_snapshots`), `DB_POOL_SIZE` (3) / `DB_MAX_OVERFLOW` (2), `TRAINING_IN_WORKER` (default true), `REALTIME_RETENTION_DAYS` (14), `RAW_SNAPSHOT_RETENTION_DAYS` (1), `POSTGRES_PASSWORD`, `API_TAG` (deployed image SHA)
 - Legacy EC2: `deploy/README.md` and `deploy/ec2-user-data.sh` still work with `docker compose --profile web`
 - Update a legacy EC2 instance with `deploy/update.sh` (not used on GCP)
 - CI/CD: `.github/workflows/ci.yml` runs path-filtered tests; `deploy.yml` on push to `main` (path-filtered web/api): wrangler Pages deploy, ghcr api/worker images built in Actions, `appleboy/ssh-action` deploy as the app user in `~/knightbus/infra/gcp` (never build on the VM); secrets `DEPLOY_HOST/USER/SSH_KEY`, `CLOUDFLARE_API_TOKEN/ACCOUNT_ID`, var `PAGES_PROJECT` in env `production`
