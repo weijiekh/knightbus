@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     gtfs_active_poll_start_local: str = Field(default="06:00", alias="GTFS_ACTIVE_POLL_START_LOCAL")
     gtfs_active_poll_end_local: str = Field(default="00:00", alias="GTFS_ACTIVE_POLL_END_LOCAL")
     gtfs_off_hours_poll_interval_seconds: int = Field(default=900, alias="GTFS_OFF_HOURS_POLL_INTERVAL_SECONDS")
-    gtfs_static_refresh_hours: int = Field(default=24, alias="GTFS_STATIC_REFRESH_HOURS")
+    maintenance_local_time: str = Field(default="04:00", alias="MAINTENANCE_LOCAL_TIME")
+    embedded_scheduler: bool = Field(default=False, alias="EMBEDDED_SCHEDULER")
     feature_refresh_minutes: int = Field(default=5, alias="FEATURE_REFRESH_MINUTES")
     training_refresh_hours: int = Field(default=24, alias="TRAINING_REFRESH_HOURS")
     training_in_worker: bool = Field(default=True, alias="TRAINING_IN_WORKER")
@@ -54,7 +55,7 @@ class Settings(BaseSettings):
             raise ValueError(f"invalid timezone: {value}") from exc
         return value
 
-    @field_validator("gtfs_active_poll_start_local", "gtfs_active_poll_end_local")
+    @field_validator("gtfs_active_poll_start_local", "gtfs_active_poll_end_local", "maintenance_local_time")
     @classmethod
     def validate_local_time(cls, value: str) -> str:
         cls.parse_local_time(value)
@@ -73,6 +74,10 @@ class Settings(BaseSettings):
             return time.fromisoformat(value)
         except ValueError as exc:
             raise ValueError(f"invalid local time '{value}', expected HH:MM") from exc
+
+    @property
+    def maintenance_time(self) -> time:
+        return self.parse_local_time(self.maintenance_local_time)
 
     @property
     def gtfs_service_tzinfo(self) -> ZoneInfo:

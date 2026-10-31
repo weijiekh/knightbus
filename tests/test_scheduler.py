@@ -176,3 +176,64 @@ def test_training_job_skipped_when_disabled() -> None:
 
 def test_prune_job_registered() -> None:
     assert "prune_realtime" in job_names(build_settings())
+
+
+def test_heavy_jobs_are_scheduled_off_peak_and_training_is_excluded_when_embedded() -> None:
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    settings = build_settings(MAINTENANCE_LOCAL_TIME="04:00", TRAINING_IN_WORKER=True)
+    sched = BackgroundScheduler(timezone="UTC")
+
+    scheduler.register_jobs(sched, settings, include_training=False)
+
+    jobs = {job.func.__name__: job for job in sched.get_jobs()}
+    assert "run_training" not in jobs
+    assert str(jobs["refresh_static"].trigger).startswith("cron[hour='4', minute='0']")
+    assert str(jobs["prune_realtime"].trigger).startswith("cron[hour='4', minute='30']")
+
+
+def test_training_job_registered_for_standalone_worker() -> None:
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    sched = BackgroundScheduler(timezone="UTC")
+
+    scheduler.register_jobs(sched, build_settings(TRAINING_IN_WORKER=True))
+
+    assert "run_training" in {job.func.__name__ for job in sched.get_jobs()}
+
+
+def test_refresh_static_only_missing_skips_loaded_feeds(monkeypatch) -> None:
+    from datetime import timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from knightbus.config import FeedConfig
+    from knightbus.db import Base
+    from knightbus.models import StaticFeedState
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        db.add(StaticFeedState(feed_name="kl", sha256="x", loaded_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+        db.commit()
+
+    fetched: list[str] = []
+
+    class FakeCollector:
+        def __init__(self, feed: FeedConfig) -> None:
+            self.feed = feed
+
+        def fetch_static(self):
+            fetched.append(self.feed.name)
+            return None
+
+    settings = build_settings(GTFS_FEEDS=[FeedConfig(name="kl", static_url="x"), FeedConfig(name="penang", static_url="x")])
+    monkeypatch.setattr(scheduler, "SessionLocal", Session)
+    monkeypatch.setattr(scheduler, "GTFSCollector", FakeCollector)
+    monkeypatch.setattr(scheduler, "get_settings", lambda: settings)
+
+    scheduler.refresh_static(only_missing=True)
+
+    assert fetched == ["penang"]

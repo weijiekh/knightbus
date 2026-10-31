@@ -1,9 +1,11 @@
 import logging
 import time
-from datetime import datetime, time as time_of_day, timezone
+from datetime import date, datetime, time as time_of_day, timedelta, timezone
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from knightbus.collector import GTFSCollector
 from knightbus.config import Settings, get_settings
@@ -11,6 +13,7 @@ from knightbus.db import Base, SessionLocal, engine
 from knightbus.etl import ETLService
 from knightbus.logging import configure_logging
 from knightbus.migrations import apply_migrations
+from knightbus.models import StaticFeedState
 from knightbus.training import TrainingService
 
 logger = logging.getLogger(__name__)
@@ -77,11 +80,15 @@ def poll_realtime_off_hours() -> None:
     poll_realtime(active_hours=False, poll_label="off_hours")
 
 
-def refresh_static() -> None:
+def refresh_static(*, only_missing: bool = False) -> None:
     settings = get_settings()
     for feed in settings.resolved_feeds:
         collector = GTFSCollector(feed)
         with SessionLocal() as db:
+            # Startup runs at any hour, so skip the multi-MB download unless the
+            # feed was never loaded; the nightly maintenance job does the real check.
+            if only_missing and db.get(StaticFeedState, feed.name) is not None:
+                continue
             payload = collector.fetch_static()
             if not payload:
                 continue
@@ -115,7 +122,13 @@ def prune_realtime() -> None:
         logger.info("pruned realtime states", extra={"deleted": deleted})
 
 
-def register_jobs(scheduler: BaseScheduler, settings: Settings) -> None:
+def maintenance_cron(settings: Settings, *, offset_minutes: int = 0) -> CronTrigger:
+    """Daily trigger in the service timezone at the off-peak maintenance time."""
+    at = datetime.combine(date.today(), settings.maintenance_time) + timedelta(minutes=offset_minutes)
+    return CronTrigger(hour=at.hour, minute=at.minute, timezone=settings.gtfs_service_tzinfo)
+
+
+def register_jobs(scheduler: BaseScheduler, settings: Settings, *, include_training: bool = True) -> None:
     scheduler.add_job(
         poll_realtime_active_hours,
         "interval",
@@ -128,17 +141,47 @@ def register_jobs(scheduler: BaseScheduler, settings: Settings) -> None:
         seconds=settings.gtfs_off_hours_poll_interval_seconds,
         max_instances=1,
     )
-    scheduler.add_job(refresh_static, "interval", hours=settings.gtfs_static_refresh_hours, max_instances=1)
-    scheduler.add_job(refresh_features, "interval", minutes=settings.feature_refresh_minutes, max_instances=1)
-    if settings.training_in_worker:
-        scheduler.add_job(run_training, "interval", hours=settings.training_refresh_hours, max_instances=1)
+    # Heavy jobs run in the quiet hours after the service window ends, 30 min apart.
+    scheduler.add_job(
+        refresh_static, maintenance_cron(settings), max_instances=1, coalesce=True, misfire_grace_time=3600
+    )
     scheduler.add_job(
         prune_realtime,
-        "interval",
-        hours=24,
+        maintenance_cron(settings, offset_minutes=30),
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),
+        coalesce=True,
+        misfire_grace_time=3600,
     )
+    scheduler.add_job(refresh_features, "interval", minutes=settings.feature_refresh_minutes, max_instances=1)
+    # Training needs pandas/sklearn, which the API image lacks, and far more
+    # memory than the embedded scheduler has; it runs in GitHub Actions instead.
+    if include_training and settings.training_in_worker:
+        scheduler.add_job(run_training, "interval", hours=settings.training_refresh_hours, max_instances=1)
+
+
+def run_bootstrap_jobs() -> None:
+    try:
+        refresh_static(only_missing=True)
+        poll_realtime_active_hours()
+        poll_realtime_off_hours()
+        refresh_features()
+    except Exception:
+        logger.exception("bootstrap job failed")
+
+
+def start_background_scheduler() -> BackgroundScheduler:
+    """Run the scheduler inside the API process (EMBEDDED_SCHEDULER=true)."""
+    Base.metadata.create_all(bind=engine)
+    apply_migrations(engine)
+    settings = get_settings()
+
+    scheduler = BackgroundScheduler(timezone="UTC")
+    register_jobs(scheduler, settings, include_training=False)
+    # One-shot, off the request path so startup (and the healthcheck) isn't blocked.
+    scheduler.add_job(run_bootstrap_jobs, next_run_time=datetime.now(timezone.utc), id="bootstrap")
+    scheduler.start()
+    logger.info("embedded scheduler started")
+    return scheduler
 
 
 def main() -> None:
@@ -151,13 +194,7 @@ def main() -> None:
     register_jobs(scheduler, settings)
 
     logger.info("running initial bootstrap jobs")
-    try:
-        refresh_static()
-        poll_realtime_active_hours()
-        poll_realtime_off_hours()
-        refresh_features()
-    except Exception:
-        logger.exception("bootstrap job failed")
+    run_bootstrap_jobs()
 
     logger.info("scheduler started")
     scheduler.start()
