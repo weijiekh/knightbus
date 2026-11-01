@@ -93,7 +93,11 @@ a { color: var(--accent); }
 
 /* ── MAP ── */
 .map-card { margin: 0 20px; height: 150px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg2); position: relative; overflow: hidden; transition: height 0.25s ease; }
+/* fill: map covers the rest of the page; JS sets the height (fitFillCards) */
 .map-card.tall { height: 380px; }
+.map-card.fill { margin: 0 12px; height: 320px; }
+.map-expand { position: absolute; right: 10px; bottom: 10px; z-index: 500; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; }
+.map-expand[hidden] { display: none; }
 #map { position: absolute; inset: 0; background: var(--bg2); }
 #stop-map { position: absolute; inset: 0; background: var(--bg2); }
 .map-msg { position: absolute; inset: 0; z-index: 500; display: grid; place-items: center; background: var(--bg2); color: var(--text2); font-size: 14px; }
@@ -109,7 +113,6 @@ a { color: var(--accent); }
 .stop-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
 [data-theme="dark"] #stop-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 [data-theme="dark"] #map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
-.map-expand { position: absolute; right: 10px; bottom: 10px; z-index: 500; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; }
 .leaflet-container { font-family: 'DM Sans', system-ui, sans-serif; }
 .leaflet-control-attribution { font-size: 10px; }
 .leaflet-bar a { background: var(--surface); color: var(--text); border-color: var(--border2); }
@@ -138,6 +141,8 @@ a { color: var(--accent); }
 .sub { font-size: 12px; color: var(--text2); }
 .chev { color: var(--text2); flex-shrink: 0; }
 .chips { display: flex; gap: 8px; }
+.card-foot { min-height: 44px; display: flex; align-items: center; } /* fixed footer keeps every listing card the same height */
+.card-foot .chips { width: 100%; }
 .chip { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 12px; background: var(--surface2); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .chip .r { font: 600 13px 'IBM Plex Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip .m { font-size: 13px; font-weight: 700; white-space: nowrap; }
@@ -236,7 +241,7 @@ nav.tabs a[aria-current="page"] { color: var(--accent); }
 @media (min-width: 900px) {
   .app { max-width: 1080px; }
   nav.tabs .inner { max-width: 1080px; }
-  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: start; }
+  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: stretch; }
   .map-card { height: 220px; }
   .map-card.tall { height: 480px; }
   .search-row { max-width: 640px; }
@@ -315,7 +320,8 @@ const S = {
   lastOkAt: 0,
   offline: false,
   lastLoadAt: 0,
-  mapExpanded: false,
+  homeMode: load("kb-home-mode", "list"), // "list" | "map" (map fills the page)
+  mapExpanded: false,     // list-mode map preview: 150px or expanded
   view: null,
 };
 
@@ -574,6 +580,10 @@ function renderHome() {
         <button type="button" class="gps" aria-label="Use my location" onclick="useGPS()">${I.gps}</button>
       </div>
     </div>
+    <div class="view-toggle" role="group" aria-label="Nearby view">
+      <button type="button" data-hv="list">List</button>
+      <button type="button" data-hv="map">Map</button>
+    </div>
     <div class="map-card" id="map-card" hidden>
       <div id="map" role="region" aria-label="Map of nearby stops"></div>
       <button type="button" class="map-expand" id="map-expand" aria-expanded="false">Expand map</button>
@@ -587,11 +597,46 @@ function renderHome() {
     S.mapExpanded = !S.mapExpanded;
     applyMapSize();
   });
-  if (S.nearby) { renderHomeBody(); drawMap(); }
+  if (S.nearby) { renderHomeBody(); }
   else if (S.loc) loadNearby();
   else if (S.locError) renderHomeBody();
   else useGPS();
+  setHomeMode(S.homeMode);
 }
+// Nearby: "list" = stop cards with a small map preview; "map" = map fills the rest of the page.
+function setHomeMode(mode) {
+  S.homeMode = mode === "map" ? "map" : "list";
+  save("kb-home-mode", S.homeMode);
+  document.querySelectorAll("[data-hv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.hv === S.homeMode)));
+  const body = $("#home-body"), card = $("#map-card"), btn = $("#map-expand");
+  const isMap = S.homeMode === "map";
+  if (body) body.hidden = isMap && !!S.nearby;
+  if (card) card.classList.toggle("fill", isMap);
+  if (!isMap && card) card.style.height = "";
+  if (btn) btn.hidden = isMap; // Expand is for the list-mode preview only
+  if (isMap) window.scrollTo(0, 0);
+  fitFillCards();
+  if (S.nearby) drawMap();
+}
+function applyMapSize() {
+  const card = $("#map-card"), btn = $("#map-expand");
+  if (!card || !btn) return;
+  card.classList.toggle("tall", S.mapExpanded);
+  btn.textContent = S.mapExpanded ? "Collapse map" : "Expand map";
+  btn.setAttribute("aria-expanded", String(S.mapExpanded));
+  setTimeout(() => { if (map) map.invalidateSize(); }, 260);
+}
+// Map cards in fill mode take the viewport height below their top edge, above the tab bar.
+function fitFillCards() {
+  const nav = document.querySelector("nav.tabs")?.offsetHeight || 76;
+  document.querySelectorAll(".map-card.fill:not([hidden])").forEach(card => {
+    const top = card.getBoundingClientRect().top;
+    card.style.height = Math.max(280, window.innerHeight - top - nav - 12) + "px";
+  });
+  if (map) map.invalidateSize();
+  if (stopMap) stopMap.invalidateSize();
+}
+window.addEventListener("resize", fitFillCards);
 function renderHomeBody(opts = {}) {
   const body = $("#home-body");
   if (!body) return;
@@ -631,16 +676,18 @@ function nearbyCard({ stop, eta }, i) {
   let bottom;
   if (eta === null) bottom = `<div class="quiet">Arrivals unavailable</div>`;
   else if (perRoute.length === 0) bottom = `<div class="quiet">No upcoming buses</div>`;
-  else bottom = `<div class="chips">${perRoute.map(it => {
-    const m = minutesOf(it);
-    return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}">${esc(fmtArrival(it))}</span></div>`;
-  }).join("")}</div>`;
+  else bottom = `<div class="chips">${perRoute.map(arrivalChip).join("")}</div>`;
   return `<a class="stop-card${i === 0 ? " first" : ""}" href="#/stop/${encodeURIComponent(stop.stop_id)}">
     <div class="stop-row">
       <span class="num${i === 0 ? " first" : ""}" aria-hidden="true">${i + 1}</span>
       <div class="grow"><div class="title">${esc(name)}</div><div class="sub">${esc(code || stop.stop_id)}${esc(dist)}</div></div>
       ${I.chev}
-    </div>${bottom}</a>`;
+    </div><div class="card-foot">${bottom}</div></a>`;
+}
+// One route + next arrival, used in nearby and saved listings.
+function arrivalChip(it) {
+  const m = minutesOf(it);
+  return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}">${esc(fmtArrival(it))}</span></div>`;
 }
 let nearbySeq = 0;
 async function loadNearby(silent) {
@@ -681,7 +728,7 @@ function drawMap() {
     const card = $("#map-card");
     if (!card || !window.L || !S.nearby || !S.loc) return;
     card.hidden = false;
-    card.classList.toggle("tall", S.mapExpanded);
+    card.classList.toggle("tall", S.mapExpanded && S.homeMode !== "map");
     destroyMap();
     map = L.map("map", mapOptions());
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -701,14 +748,6 @@ function drawMap() {
     });
     map.fitBounds(pts, { padding: [24, 24], maxZoom: 17 });
   });
-}
-function applyMapSize() {
-  const card = $("#map-card"), btn = $("#map-expand");
-  if (!card) return;
-  card.classList.toggle("tall", S.mapExpanded);
-  btn.textContent = S.mapExpanded ? "Collapse map" : "Expand map";
-  btn.setAttribute("aria-expanded", String(S.mapExpanded));
-  setTimeout(() => { if (map) map.invalidateSize(); }, 260);
 }
 // If Leaflet never loads, the map card simply stays hidden.
 
@@ -1156,6 +1195,8 @@ view.addEventListener("click", e => {
   if (chip) setSavedRoute(chip.dataset.routeChip);
   const sv = e.target.closest("[data-sv]");
   if (sv) setStopView(sv.dataset.sv);
+  const hv = e.target.closest("[data-hv]");
+  if (hv) setHomeMode(hv.dataset.hv);
   if (e.target.closest("[data-walk]")) showWalkRoute();
 });
 // Walking route from the user's location to the stop (OpenRouteService via our /v1/walk proxy).
