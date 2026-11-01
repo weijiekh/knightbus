@@ -769,7 +769,7 @@ function setStopView(mode) {
   if (!card || !body) return;
   card.hidden = mode !== "map";
   body.hidden = mode === "map";
-  if (mode === "map") drawStopMap(); else destroyStopMap();
+  if (mode === "map") { fitFillCards(); drawStopMap(); } else destroyStopMap();
   renderWalkBar();
 }
 function drawStopMap() {
@@ -837,7 +837,7 @@ function renderStop({ id }) {
       <button type="button" data-sv="list" aria-pressed="true">List</button>
       <button type="button" data-sv="map" aria-pressed="false">Map</button>
     </div>
-    <div class="map-card tall" id="stop-map-card" hidden>
+    <div class="map-card fill" id="stop-map-card" hidden>
       <div id="stop-map" role="region" aria-label="Map of this stop"></div>
       <div class="map-msg" id="stop-map-msg" hidden>Stop location unknown</div>
       <div class="walk-bar" id="walk-bar" hidden>
