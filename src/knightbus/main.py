@@ -11,7 +11,8 @@ from knightbus.logging import configure_logging
 from knightbus.predictor import ETAPredictor
 from knightbus.models import Stop
 from knightbus.search import search as search_stops_and_routes, split_stop_name
-from knightbus.schemas import HealthResponse, SearchResponse, StopEtaResponse, StopResponse, VehicleResponse
+from knightbus.schemas import HealthResponse, SearchResponse, StopEtaResponse, StopResponse, VehicleResponse, WalkRouteResponse
+from knightbus.walking import WalkingError, WalkingUnavailable, in_service_area, walking_route
 
 configure_logging()
 
@@ -80,6 +81,24 @@ def stop_etas(
         generated_at=datetime.now(timezone.utc),
         items=items,
     )
+
+
+@app.get("/v1/walk", response_model=WalkRouteResponse)
+def walk(
+    from_lat: float = Query(ge=-90, le=90),
+    from_lon: float = Query(ge=-180, le=180),
+    to_lat: float = Query(ge=-90, le=90),
+    to_lon: float = Query(ge=-180, le=180),
+) -> WalkRouteResponse:
+    if not (in_service_area(from_lat, from_lon) and in_service_area(to_lat, to_lon)):
+        raise HTTPException(status_code=422, detail="outside service area")
+    try:
+        route = walking_route(from_lat, from_lon, to_lat, to_lon)
+    except WalkingUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except WalkingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return WalkRouteResponse(distance_m=route.distance_m, duration_s=route.duration_s, geometry=route.geometry)
 
 
 @app.get("/v1/routes/{route_id}/vehicles", response_model=list[VehicleResponse])
