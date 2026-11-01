@@ -209,6 +209,11 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .page-title { padding: 18px 20px 4px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
 .page-sub { padding: 0 20px 12px; font-size: 13px; color: var(--text2); }
 .row-card { text-decoration: none; color: inherit; display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); }
+.saved-item { display: flex; align-items: center; gap: 6px; }
+.saved-item .row-card { flex: 1; min-width: 0; }
+.drag-handle { flex: none; width: 36px; min-height: 44px; display: grid; place-items: center; background: none; border: 0; border-radius: 10px; color: var(--text2); cursor: grab; touch-action: none; }
+.drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.saved-item.dragging { opacity: 0.6; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -266,6 +271,7 @@ const I = {
   busLine: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="15" rx="3"/><path d="M4 11h16"/><circle cx="8" cy="15" r="1"/><circle cx="16" cy="15" r="1"/><path d="M7 18v2M17 18v2"/></svg>',
   search: '<svg class="lead" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   gps: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>',
+  grip: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>',
   chev: '<svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
   back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>',
   star: (on) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="m12 17.3-5.4 3 1-6.1L3.2 9.9l6.1-.9L12 3.5l2.7 5.5 6.1.9-4.4 4.3 1 6.1z"/></svg>`,
@@ -1045,7 +1051,7 @@ async function loadSaved() {
 }
 function drawSaved() {
   const list = $("#saved-list");
-  if (!list) return;
+  if (!list || savedDrag) return; // keep DOM stable while a drag is in progress
   if (!S.saved.length) {
     list.innerHTML = `<div class="panel dashed" style="margin:0">${I.star(false)}<div class="ptitle">No saved stops yet</div>
       <div class="psub">Open a stop and tap the star to save it.</div><a class="btn" href="#/" style="display:inline-flex;align-items:center;text-decoration:none">Find nearby stops</a></div>`;
@@ -1060,9 +1066,68 @@ function drawSaved() {
       const first = upcoming(eta)[0];
       next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>` : `<span class="quiet">No buses</span>`;
     }
-    return `<a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a>`;
+    return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a></div>`;
   }).join("");
 }
+
+// Saved-stop reordering: drag the grip handle (pointer), or focus it and use arrow keys.
+let savedDrag = null;
+function commitSavedOrder() {
+  const order = [...document.querySelectorAll("#saved-list .saved-item")].map(el => el.dataset.id);
+  if (order.length !== S.saved.length || order.some(id => !S.saved.includes(id))) return;
+  S.saved = order;
+  save("kb-saved", S.saved);
+}
+view.addEventListener("pointerdown", e => {
+  const handle = e.target.closest(".drag-handle");
+  if (!handle || e.button > 0) return;
+  const item = handle.closest(".saved-item");
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);
+  savedDrag = { item, pointerId: e.pointerId };
+  item.classList.add("dragging");
+});
+view.addEventListener("pointermove", e => {
+  if (!savedDrag || e.pointerId !== savedDrag.pointerId) return;
+  const { item } = savedDrag;
+  const parent = item.parentElement;
+  let best = null, bestDist = Infinity;
+  for (const el of parent.children) {
+    if (el === item) continue;
+    const r = el.getBoundingClientRect();
+    const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+    if (d < bestDist) { bestDist = d; best = el; }
+  }
+  if (!best) return;
+  const r = best.getBoundingClientRect();
+  const target = e.clientY < r.top + r.height / 2 ? best : best.nextElementSibling;
+  if (target !== item) parent.insertBefore(item, target);
+});
+const endSavedDrag = e => {
+  if (!savedDrag || e.pointerId !== savedDrag.pointerId) return;
+  savedDrag.item.classList.remove("dragging");
+  savedDrag = null;
+  commitSavedOrder();
+};
+view.addEventListener("pointerup", endSavedDrag);
+view.addEventListener("pointercancel", endSavedDrag);
+view.addEventListener("keydown", e => {
+  const handle = e.target.closest?.(".drag-handle");
+  if (!handle) return;
+  const item = handle.closest(".saved-item");
+  if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+    const prev = item.previousElementSibling;
+    if (!prev) return;
+    prev.before(item);
+  } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+    const next = item.nextElementSibling;
+    if (!next) return;
+    next.after(item);
+  } else return;
+  e.preventDefault();
+  commitSavedOrder();
+  handle.focus();
+});
 
 // ══════════ ROUTES ══════════
 function renderRoutes() {
