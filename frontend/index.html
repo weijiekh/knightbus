@@ -214,6 +214,12 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .drag-handle { flex: none; width: 36px; min-height: 44px; display: grid; place-items: center; background: none; border: 0; border-radius: 10px; color: var(--text2); cursor: grab; touch-action: none; }
 .drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .saved-item.dragging { opacity: 0.6; }
+.route-filter { display: flex; gap: 8px; overflow-x: auto; padding: 0 20px 12px; scrollbar-width: none; }
+.route-filter::-webkit-scrollbar { display: none; }
+.route-filter[hidden] { display: none; }
+.route-filter button { flex: none; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font: 600 13px 'IBM Plex Mono', monospace; cursor: pointer; }
+.route-filter button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.saved-item.dragging .drag-handle { cursor: grabbing; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -757,18 +763,6 @@ function toggleSaved(id) {
   if (b) { b.innerHTML = I.star(isSaved(id)); b.classList.toggle("on", isSaved(id)); b.setAttribute("aria-pressed", String(isSaved(id))); b.setAttribute("aria-label", isSaved(id) ? "Remove from saved" : "Save stop"); }
 }
 function goBack() { if (history.length > 1) history.back(); else location.hash = "#/"; }
-function isSaved(id) { return S.saved.includes(id); }
-function toggleSaved(id) {
-  S.saved = isSaved(id) ? S.saved.filter(x => x !== id) : [...S.saved, id];
-  save("kb-saved", S.saved);
-  const b = $("#save-btn");
-  if (b) { b.innerHTML = I.star(isSaved(id)); b.classList.toggle("on", isSaved(id)); b.setAttribute("aria-pressed", String(isSaved(id))); b.setAttribute("aria-label", isSaved(id) ? "Remove from saved" : "Save stop"); }
-}
-function goBack() { if (history.length > 1) history.back(); else location.hash = "#/"; }
-view.addEventListener("click", e => {
-  const sv = e.target.closest("[data-sv]");
-  if (sv) setStopView(sv.dataset.sv);
-});
 function stopHeadText(id) {
   const { code, name } = stopDisplay(id);
   const d = stopDistance(id);
@@ -1039,7 +1033,7 @@ function openRecent(r) {
 // ══════════ SAVED ══════════
 const savedState = { etas: {} };
 function renderSaved() {
-  view.innerHTML = `<h1 class="page-title">Saved stops</h1><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="list" id="saved-list"></div>`;
+  view.innerHTML = `<h1 class="page-title">Saved stops</h1><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="route-filter" id="saved-routes" role="group" aria-label="Filter by route"></div><div class="list" id="saved-list"></div>`;
   drawSaved();
   if (S.saved.length) loadSaved();
 }
@@ -1049,33 +1043,68 @@ async function loadSaved() {
   S.saved.forEach((id, i) => { savedState.etas[id] = results[i]; });
   if (S.view === "saved") drawSaved();
 }
+let savedRoute = load("kb-saved-route", null); // selected route label, null = all
+function setSavedRoute(label) {
+  savedRoute = label || null;
+  save("kb-saved-route", savedRoute);
+  drawSaved();
+}
+function savedRouteLabels() {
+  const set = new Set();
+  for (const id of S.saved) (savedState.etas[id]?.items || []).forEach(it => set.add(routeLabel(it)));
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+// Unknown (not loaded yet) stays visible; unavailable or no-match is hidden in route mode.
+function servesRoute(id, route) {
+  const eta = savedState.etas[id];
+  if (eta === undefined) return true;
+  if (!eta) return false;
+  return (eta.items || []).some(it => routeLabel(it) === route);
+}
 function drawSaved() {
-  const list = $("#saved-list");
+  const list = $("#saved-list"), bar = $("#saved-routes");
   if (!list || savedDrag) return; // keep DOM stable while a drag is in progress
   if (!S.saved.length) {
+    if (bar) bar.hidden = true;
     list.innerHTML = `<div class="panel dashed" style="margin:0">${I.star(false)}<div class="ptitle">No saved stops yet</div>
       <div class="psub">Open a stop and tap the star to save it.</div><a class="btn" href="#/" style="display:inline-flex;align-items:center;text-decoration:none">Find nearby stops</a></div>`;
     return;
   }
-  list.innerHTML = S.saved.map(id => {
-    const { code, name } = stopDisplay(id);
-    const eta = savedState.etas[id];
-    let next = `<span class="quiet">…</span>`;
-    if (eta === null) next = `<span class="quiet">unavailable</span>`;
-    else if (eta) {
-      const first = upcoming(eta)[0];
-      next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>` : `<span class="quiet">No buses</span>`;
-    }
-    return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a></div>`;
-  }).join("");
+  const labels = savedRouteLabels();
+  if (bar) {
+    bar.hidden = labels.length === 0;
+    bar.innerHTML = labels.length ? [null, ...labels].map(l => `<button type="button" data-route-chip="${esc(l || "")}" aria-pressed="${(savedRoute || null) === l}">${l ? esc(l) : "All"}</button>`).join("") : "";
+  }
+  // Route mode keeps the user's saved order (drag to prioritize) and shows only that route's arrivals.
+  const ids = savedRoute ? S.saved.filter(id => servesRoute(id, savedRoute)) : S.saved;
+  const hidden = S.saved.length - ids.length;
+  const cards = ids.map(id => savedCard(id, savedRoute)).join("");
+  const note = savedRoute && hidden > 0
+    ? `<button type="button" class="more" data-route-chip="">${hidden} saved stop${hidden === 1 ? "" : "s"} without ${esc(savedRoute)} hidden · Show all</button>` : "";
+  list.innerHTML = cards + note;
 }
-
+function savedCard(id, route) {
+  const { code, name } = stopDisplay(id);
+  const eta = savedState.etas[id];
+  let next = `<span class="quiet">…</span>`;
+  if (eta === null) next = `<span class="quiet">unavailable</span>`;
+  else if (eta) {
+    const items = upcoming(eta).filter(it => !route || routeLabel(it) === route);
+    const first = items[0];
+    next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>`
+      : `<span class="quiet">${route ? `No upcoming ${esc(route)}` : "No buses"}</span>`;
+  }
+  return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a></div>`;
+}
 // Saved-stop reordering: drag the grip handle (pointer), or focus it and use arrow keys.
 let savedDrag = null;
 function commitSavedOrder() {
   const order = [...document.querySelectorAll("#saved-list .saved-item")].map(el => el.dataset.id);
-  if (order.length !== S.saved.length || order.some(id => !S.saved.includes(id))) return;
-  S.saved = order;
+  const visible = new Set(order);
+  if (visible.size !== order.length || S.saved.filter(id => visible.has(id)).length !== order.length) return;
+  // Visible stops take the saved slots in their new order; hidden stops keep their positions.
+  let k = 0;
+  S.saved = S.saved.map(id => visible.has(id) ? order[k++] : id);
   save("kb-saved", S.saved);
 }
 view.addEventListener("pointerdown", e => {
@@ -1109,6 +1138,12 @@ const endSavedDrag = e => {
   savedDrag = null;
   commitSavedOrder();
 };
+view.addEventListener("click", e => {
+  const chip = e.target.closest("[data-route-chip]");
+  if (chip) setSavedRoute(chip.dataset.routeChip);
+  const sv = e.target.closest("[data-sv]");
+  if (sv) setStopView(sv.dataset.sv);
+});
 view.addEventListener("pointerup", endSavedDrag);
 view.addEventListener("pointercancel", endSavedDrag);
 view.addEventListener("keydown", e => {
