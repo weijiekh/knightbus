@@ -93,7 +93,11 @@ a { color: var(--accent); }
 
 /* ── MAP ── */
 .map-card { margin: 0 20px; height: 150px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg2); position: relative; overflow: hidden; transition: height 0.25s ease; }
+/* fill: map covers the rest of the page; JS sets the height (fitFillCards) */
 .map-card.tall { height: 380px; }
+.map-card.fill { margin: 0 12px; height: 320px; }
+.map-expand { position: absolute; right: 10px; bottom: 10px; z-index: 500; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; }
+.map-expand[hidden] { display: none; }
 #map { position: absolute; inset: 0; background: var(--bg2); }
 #stop-map { position: absolute; inset: 0; background: var(--bg2); }
 .map-msg { position: absolute; inset: 0; z-index: 500; display: grid; place-items: center; background: var(--bg2); color: var(--text2); font-size: 14px; }
@@ -109,7 +113,6 @@ a { color: var(--accent); }
 .stop-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
 [data-theme="dark"] #stop-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 [data-theme="dark"] #map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
-.map-expand { position: absolute; right: 10px; bottom: 10px; z-index: 500; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; }
 .leaflet-container { font-family: 'DM Sans', system-ui, sans-serif; }
 .leaflet-control-attribution { font-size: 10px; }
 .leaflet-bar a { background: var(--surface); color: var(--text); border-color: var(--border2); }
@@ -138,6 +141,8 @@ a { color: var(--accent); }
 .sub { font-size: 12px; color: var(--text2); }
 .chev { color: var(--text2); flex-shrink: 0; }
 .chips { display: flex; gap: 8px; }
+.card-foot { min-height: 44px; display: flex; align-items: center; } /* fixed footer keeps every listing card the same height */
+.card-foot .chips { width: 100%; }
 .chip { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 12px; background: var(--surface2); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .chip .r { font: 600 13px 'IBM Plex Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip .m { font-size: 13px; font-weight: 700; white-space: nowrap; }
@@ -225,6 +230,15 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .route-filter button { flex: none; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font: 600 13px 'IBM Plex Mono', monospace; cursor: pointer; }
 .route-filter button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .saved-item.dragging .drag-handle { cursor: grabbing; }
+/* Drag handles only show in reorder mode (toggled by the Reorder button) */
+.drag-handle { display: none; }
+#saved-list.reordering .drag-handle { display: grid; }
+.saved-card { flex-direction: column; align-items: stretch; gap: 10px; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 20px; }
+.page-head .page-title { flex: 1; min-width: 0; }
+.reorder-btn { min-height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; flex-shrink: 0; }
+.reorder-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.reorder-btn[hidden] { display: none; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -236,7 +250,7 @@ nav.tabs a[aria-current="page"] { color: var(--accent); }
 @media (min-width: 900px) {
   .app { max-width: 1080px; }
   nav.tabs .inner { max-width: 1080px; }
-  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: start; }
+  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: stretch; }
   .map-card { height: 220px; }
   .map-card.tall { height: 480px; }
   .search-row { max-width: 640px; }
@@ -315,7 +329,8 @@ const S = {
   lastOkAt: 0,
   offline: false,
   lastLoadAt: 0,
-  mapExpanded: false,
+  homeMode: load("kb-home-mode", "list"), // "list" | "map" (map fills the page)
+  mapExpanded: false,     // list-mode map preview: 150px or expanded
   view: null,
 };
 
@@ -574,6 +589,10 @@ function renderHome() {
         <button type="button" class="gps" aria-label="Use my location" onclick="useGPS()">${I.gps}</button>
       </div>
     </div>
+    <div class="view-toggle" role="group" aria-label="Nearby view">
+      <button type="button" data-hv="list">List</button>
+      <button type="button" data-hv="map">Map</button>
+    </div>
     <div class="map-card" id="map-card" hidden>
       <div id="map" role="region" aria-label="Map of nearby stops"></div>
       <button type="button" class="map-expand" id="map-expand" aria-expanded="false">Expand map</button>
@@ -587,11 +606,46 @@ function renderHome() {
     S.mapExpanded = !S.mapExpanded;
     applyMapSize();
   });
-  if (S.nearby) { renderHomeBody(); drawMap(); }
+  if (S.nearby) { renderHomeBody(); }
   else if (S.loc) loadNearby();
   else if (S.locError) renderHomeBody();
   else useGPS();
+  setHomeMode(S.homeMode);
 }
+// Nearby: "list" = stop cards with a small map preview; "map" = map fills the rest of the page.
+function setHomeMode(mode) {
+  S.homeMode = mode === "map" ? "map" : "list";
+  save("kb-home-mode", S.homeMode);
+  document.querySelectorAll("[data-hv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.hv === S.homeMode)));
+  const body = $("#home-body"), card = $("#map-card"), btn = $("#map-expand");
+  const isMap = S.homeMode === "map";
+  if (body) body.hidden = isMap && !!S.nearby;
+  if (card) card.classList.toggle("fill", isMap);
+  if (!isMap && card) card.style.height = "";
+  if (btn) btn.hidden = isMap; // Expand is for the list-mode preview only
+  if (isMap) window.scrollTo(0, 0);
+  fitFillCards();
+  if (S.nearby) drawMap();
+}
+function applyMapSize() {
+  const card = $("#map-card"), btn = $("#map-expand");
+  if (!card || !btn) return;
+  card.classList.toggle("tall", S.mapExpanded);
+  btn.textContent = S.mapExpanded ? "Collapse map" : "Expand map";
+  btn.setAttribute("aria-expanded", String(S.mapExpanded));
+  setTimeout(() => { if (map) map.invalidateSize(); }, 260);
+}
+// Map cards in fill mode take the viewport height below their top edge, above the tab bar.
+function fitFillCards() {
+  const nav = document.querySelector("nav.tabs")?.offsetHeight || 76;
+  document.querySelectorAll(".map-card.fill:not([hidden])").forEach(card => {
+    const top = card.getBoundingClientRect().top;
+    card.style.height = Math.max(280, window.innerHeight - top - nav - 12) + "px";
+  });
+  if (map) map.invalidateSize();
+  if (stopMap) stopMap.invalidateSize();
+}
+window.addEventListener("resize", fitFillCards);
 function renderHomeBody(opts = {}) {
   const body = $("#home-body");
   if (!body) return;
@@ -631,16 +685,18 @@ function nearbyCard({ stop, eta }, i) {
   let bottom;
   if (eta === null) bottom = `<div class="quiet">Arrivals unavailable</div>`;
   else if (perRoute.length === 0) bottom = `<div class="quiet">No upcoming buses</div>`;
-  else bottom = `<div class="chips">${perRoute.map(it => {
-    const m = minutesOf(it);
-    return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}">${esc(fmtArrival(it))}</span></div>`;
-  }).join("")}</div>`;
+  else bottom = `<div class="chips">${perRoute.map(arrivalChip).join("")}</div>`;
   return `<a class="stop-card${i === 0 ? " first" : ""}" href="#/stop/${encodeURIComponent(stop.stop_id)}">
     <div class="stop-row">
       <span class="num${i === 0 ? " first" : ""}" aria-hidden="true">${i + 1}</span>
       <div class="grow"><div class="title">${esc(name)}</div><div class="sub">${esc(code || stop.stop_id)}${esc(dist)}</div></div>
       ${I.chev}
-    </div>${bottom}</a>`;
+    </div><div class="card-foot">${bottom}</div></a>`;
+}
+// One route + next arrival, used in nearby and saved listings.
+function arrivalChip(it) {
+  const m = minutesOf(it);
+  return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}">${esc(fmtArrival(it))}</span></div>`;
 }
 let nearbySeq = 0;
 async function loadNearby(silent) {
@@ -681,7 +737,7 @@ function drawMap() {
     const card = $("#map-card");
     if (!card || !window.L || !S.nearby || !S.loc) return;
     card.hidden = false;
-    card.classList.toggle("tall", S.mapExpanded);
+    card.classList.toggle("tall", S.mapExpanded && S.homeMode !== "map");
     destroyMap();
     map = L.map("map", mapOptions());
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -701,14 +757,6 @@ function drawMap() {
     });
     map.fitBounds(pts, { padding: [24, 24], maxZoom: 17 });
   });
-}
-function applyMapSize() {
-  const card = $("#map-card"), btn = $("#map-expand");
-  if (!card) return;
-  card.classList.toggle("tall", S.mapExpanded);
-  btn.textContent = S.mapExpanded ? "Collapse map" : "Expand map";
-  btn.setAttribute("aria-expanded", String(S.mapExpanded));
-  setTimeout(() => { if (map) map.invalidateSize(); }, 260);
 }
 // If Leaflet never loads, the map card simply stays hidden.
 
@@ -730,7 +778,7 @@ function setStopView(mode) {
   if (!card || !body) return;
   card.hidden = mode !== "map";
   body.hidden = mode === "map";
-  if (mode === "map") drawStopMap(); else destroyStopMap();
+  if (mode === "map") { fitFillCards(); drawStopMap(); } else destroyStopMap();
   renderWalkBar();
 }
 function drawStopMap() {
@@ -798,7 +846,7 @@ function renderStop({ id }) {
       <button type="button" data-sv="list" aria-pressed="true">List</button>
       <button type="button" data-sv="map" aria-pressed="false">Map</button>
     </div>
-    <div class="map-card tall" id="stop-map-card" hidden>
+    <div class="map-card fill" id="stop-map-card" hidden>
       <div id="stop-map" role="region" aria-label="Map of this stop"></div>
       <div class="map-msg" id="stop-map-msg" hidden>Stop location unknown</div>
       <div class="walk-bar" id="walk-bar" hidden>
@@ -1046,7 +1094,7 @@ function openRecent(r) {
 // ══════════ SAVED ══════════
 const savedState = { etas: {} };
 function renderSaved() {
-  view.innerHTML = `<h1 class="page-title">Saved stops</h1><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="route-filter" id="saved-routes" role="group" aria-label="Filter by route"></div><div class="list" id="saved-list"></div>`;
+  view.innerHTML = `<div class="page-head"><h1 class="page-title">Saved stops</h1><button type="button" class="reorder-btn" id="reorder-btn" aria-pressed="false" hidden>Reorder</button></div><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="route-filter" id="saved-routes" role="group" aria-label="Filter by route"></div><div class="list" id="saved-list"></div>`;
   drawSaved();
   if (S.saved.length) loadSaved();
 }
@@ -1055,6 +1103,16 @@ async function loadSaved() {
   const results = await Promise.all(S.saved.map(id => fetchEtas(id).catch(() => savedState.etas[id] ?? null)));
   S.saved.forEach((id, i) => { savedState.etas[id] = results[i]; });
   if (S.view === "saved") drawSaved();
+}
+let savedReorder = false; // drag handles shown only while true (Reorder button)
+function toggleSavedReorder() {
+  savedReorder = !savedReorder;
+  syncSavedReorder();
+}
+function syncSavedReorder() {
+  const b = $("#reorder-btn");
+  if (b) { b.hidden = !S.saved.length; b.setAttribute("aria-pressed", String(savedReorder)); b.textContent = savedReorder ? "Done" : "Reorder"; }
+  $("#saved-list")?.classList.toggle("reordering", savedReorder && S.saved.length > 0);
 }
 let savedRoute = load("kb-saved-route", null); // selected route label, null = all
 function setSavedRoute(label) {
@@ -1079,6 +1137,8 @@ function drawSaved() {
   if (!list || savedDrag) return; // keep DOM stable while a drag is in progress
   if (!S.saved.length) {
     if (bar) bar.hidden = true;
+    savedReorder = false;
+    syncSavedReorder();
     list.innerHTML = `<div class="panel dashed" style="margin:0">${I.star(false)}<div class="ptitle">No saved stops yet</div>
       <div class="psub">Open a stop and tap the star to save it.</div><a class="btn" href="#/" style="display:inline-flex;align-items:center;text-decoration:none">Find nearby stops</a></div>`;
     return;
@@ -1095,19 +1155,22 @@ function drawSaved() {
   const note = savedRoute && hidden > 0
     ? `<button type="button" class="more" data-route-chip="">${hidden} saved stop${hidden === 1 ? "" : "s"} without ${esc(savedRoute)} hidden · Show all</button>` : "";
   list.innerHTML = cards + note;
+  syncSavedReorder();
 }
+// Top 1–2 routes with their next arrival; same card shape as nearby so all cards match in size.
 function savedCard(id, route) {
   const { code, name } = stopDisplay(id);
   const eta = savedState.etas[id];
-  let next = `<span class="quiet">…</span>`;
-  if (eta === null) next = `<span class="quiet">unavailable</span>`;
-  else if (eta) {
+  let foot;
+  if (eta === undefined) foot = `<span class="quiet">Loading arrivals…</span>`;
+  else if (eta === null) foot = `<span class="quiet">Arrivals unavailable</span>`;
+  else {
     const items = upcoming(eta).filter(it => !route || routeLabel(it) === route);
-    const first = items[0];
-    next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>`
-      : `<span class="quiet">${route ? `No upcoming ${esc(route)}` : "No buses"}</span>`;
+    const perRoute = firstBusPerRoute(items).slice(0, 2);
+    foot = perRoute.length ? `<div class="chips">${perRoute.map(arrivalChip).join("")}</div>`
+      : `<span class="quiet">${route ? `No upcoming ${esc(route)}` : "No upcoming buses"}</span>`;
   }
-  return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a></div>`;
+  return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card saved-card" href="#/stop/${encodeURIComponent(id)}"><div class="stop-row"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${I.chev}</div><div class="card-foot">${foot}</div></a></div>`;
 }
 // Saved-stop reordering: drag the grip handle (pointer), or focus it and use arrow keys.
 let savedDrag = null;
@@ -1154,8 +1217,11 @@ const endSavedDrag = e => {
 view.addEventListener("click", e => {
   const chip = e.target.closest("[data-route-chip]");
   if (chip) setSavedRoute(chip.dataset.routeChip);
+  if (e.target.closest("#reorder-btn")) toggleSavedReorder();
   const sv = e.target.closest("[data-sv]");
   if (sv) setStopView(sv.dataset.sv);
+  const hv = e.target.closest("[data-hv]");
+  if (hv) setHomeMode(hv.dataset.hv);
   if (e.target.closest("[data-walk]")) showWalkRoute();
 });
 // Walking route from the user's location to the stop (OpenRouteService via our /v1/walk proxy).
