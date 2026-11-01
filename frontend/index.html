@@ -232,6 +232,14 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .saved-item.dragging .drag-handle { cursor: grabbing; }
 /* Drag handles only show in reorder mode (toggled by the Reorder button) */
 .drag-handle { display: none; }
+.trip-link { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; min-height: 36px; display: inline-flex; align-items: center; }
+.trip-now { margin-bottom: 4px; }
+.trip-nav { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.trip-nav a, .trip-nav span { flex: 1; min-width: 0; margin-top: 0; text-decoration: none; justify-content: center; }
+.trip-nav span[aria-disabled="true"] { opacity: 0.5; }
+.trip-row.current { border-color: var(--border-live); }
+.trip-row.done { opacity: 0.5; }
+.trip-row .badge { flex-shrink: 0; }
 #saved-list.reordering .drag-handle { display: grid; }
 .saved-card { flex-direction: column; align-items: stretch; gap: 10px; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 20px; }
@@ -539,6 +547,7 @@ function parseHash() {
   const parts = h.split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "stop" && parts[1]) return { name: "stop", id: parts[1] };
   if (parts[0] === "route" && parts[1]) return { name: "route", id: parts[1] };
+  if (parts[0] === "trip" && parts[1]) return { name: "trip", tripId: parts[1], stopId: parts[2] || null };
   if (parts[0] === "search") return { name: "search", q: parts[1] || "" };
   if (parts[0] === "saved") return { name: "saved" };
   if (parts[0] === "routes") return { name: "routes" };
@@ -548,11 +557,11 @@ let currentRoute = null;
 function route() {
   currentRoute = parseHash();
   S.view = currentRoute.name;
-  const tab = { home: "nearby", stop: "nearby", search: "nearby", saved: "saved", routes: "routes", route: "routes" }[S.view];
+  const tab = { home: "nearby", stop: "nearby", trip: "nearby", search: "nearby", saved: "saved", routes: "routes", route: "routes" }[S.view];
   document.querySelectorAll("nav.tabs a").forEach(a => a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   destroyMap();
   window.scrollTo(0, 0);
-  ({ home: renderHome, stop: renderStop, search: renderSearch, saved: renderSaved, routes: renderRoutes, route: renderRoute })[S.view](currentRoute);
+  ({ home: renderHome, stop: renderStop, trip: renderTrip, search: renderSearch, saved: renderSaved, routes: renderRoutes, route: renderRoute })[S.view](currentRoute);
 }
 window.addEventListener("hashchange", route);
 function refreshView(force) {
@@ -619,13 +628,13 @@ function setHomeMode(mode) {
   document.querySelectorAll("[data-hv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.hv === S.homeMode)));
   const body = $("#home-body"), card = $("#map-card"), btn = $("#map-expand");
   const isMap = S.homeMode === "map";
-  if (body) body.hidden = isMap && !!S.nearby;
+  if (body) body.hidden = isMap && !!S.loc; // map mode: no list skeleton under the map while stops load
   if (card) card.classList.toggle("fill", isMap);
   if (!isMap && card) card.style.height = "";
   if (btn) btn.hidden = isMap; // Expand is for the list-mode preview only
   if (isMap) window.scrollTo(0, 0);
   fitFillCards();
-  if (S.nearby) drawMap();
+  if (S.loc) drawMap();
 }
 function applyMapSize() {
   const card = $("#map-card"), btn = $("#map-expand");
@@ -703,6 +712,7 @@ async function loadNearby(silent) {
   if (!S.loc) return;
   const seq = ++nearbySeq;
   S.lastLoadAt = Date.now();
+  if (!map) drawMap(); // show the map as soon as location is known, before stop data arrives
   if (!silent || !S.nearby) renderHomeBody({ loading: true });
   let stops;
   try {
@@ -735,9 +745,10 @@ function whenLeaflet(cb) {
 function drawMap() {
   whenLeaflet(() => {
     const card = $("#map-card");
-    if (!card || !window.L || !S.nearby || !S.loc) return;
+    if (!card || !window.L || !S.loc) return; // draws as soon as location is known; stop pins are added when they arrive
     card.hidden = false;
     card.classList.toggle("tall", S.mapExpanded && S.homeMode !== "map");
+    fitFillCards(); // size after un-hiding, otherwise a fill card keeps its default height and leaves empty space
     destroyMap();
     map = L.map("map", mapOptions());
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -745,7 +756,7 @@ function drawMap() {
     }).addTo(map);
     const pts = [[S.loc.lat, S.loc.lon]];
     L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false, title: "You are here" }).addTo(map);
-    S.nearby.forEach(({ stop }, i) => {
+    (S.nearby || []).forEach(({ stop }, i) => {
       if (stop.lat == null) return;
       pts.push([stop.lat, stop.lon]);
       const m = L.marker([stop.lat, stop.lon], {
@@ -940,6 +951,7 @@ function arrivalCard(group) {
       ${live ? '<span class="badge live">LIVE</span>' : '<span class="badge sched">SCHEDULED</span>'}
       ${live ? delayBadge(first) : ""}
       ${then ? `<span class="then">${esc(then)}</span>` : (live ? "" : '<span class="sub">no live bus yet</span>')}
+      ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}">Ride · next stops →</a>` : ""}
     </div>
   </div>`;
 }
@@ -1089,6 +1101,58 @@ function openRecent(r) {
   if (r.kind === "stop") location.hash = "#/stop/" + encodeURIComponent(r.id);
   else if (r.kind === "route") { S.routeMeta[r.id] = S.routeMeta[r.id] || { route_id: r.id, short_name: r.label, long_name: r.long_name }; location.hash = "#/route/" + encodeURIComponent(r.id); }
   else setPlace(r.lat, r.lon, r.label);
+}
+
+// ══════════ TRIP (step through stops) ══════════
+// URL: #/trip/<trip_id>/<stop_id>. The stop in the URL is where the rider is now; Next/Previous change it.
+const tripState = { id: null, data: null, error: false };
+function tripStepHref(tripId, stop) {
+  return `#/trip/${encodeURIComponent(tripId)}/${encodeURIComponent(stop.stop_id)}`;
+}
+async function renderTrip({ tripId, stopId }) {
+  view.innerHTML = `<div class="bar"><button type="button" class="icon-btn ghost" aria-label="Back" onclick="goBack()">${I.back}</button></div>
+    <div class="stop-head"><div class="code" id="trip-code">Trip</div><h1 id="trip-title">Stops ahead</h1></div>
+    <div id="trip-body"><div class="skel" role="status" aria-label="Loading stops"><div></div><div></div><div></div></div></div>`;
+  if (tripState.id !== tripId || !tripState.data) {
+    tripState.id = tripId; tripState.data = null; tripState.error = false;
+    try { tripState.data = await apiFetch(`/v1/trips/${encodeURIComponent(tripId)}/stops`); }
+    catch { tripState.error = true; }
+  }
+  if (currentRoute?.name !== "trip" || currentRoute.tripId !== tripId) return; // user navigated away
+  renderTripBody(stopId);
+}
+function renderTripBody(stopId) {
+  const body = $("#trip-body"), data = tripState.data;
+  if (!body) return;
+  if (!data) {
+    body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load stops</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="tripState.id=null;tripState.data=null;renderTrip(currentRoute)">Retry</button></div>`;
+    return;
+  }
+  const stops = data.stops;
+  const idx = Math.max(0, stops.findIndex(s => s.stop_id === stopId));
+  const cur = stops[idx], prev = stops[idx - 1], next = stops[idx + 1];
+  const route = data.route_short_name || "";
+  const dest = data.headsign ? `to ${titleCase(data.headsign)}` : "";
+  $("#trip-code").textContent = [route && `Route ${route}`, dest].filter(Boolean).join(" · ") || "Trip";
+  $("#trip-title").textContent = `${stops.length} stops on this trip`;
+  body.innerHTML = `
+    <div class="panel trip-now">
+      <div class="psub">You are at stop ${idx + 1} of ${stops.length}</div>
+      <div class="ptitle">${esc(cur.stop_name || cur.stop_id)}</div>
+      ${cur.stop_code ? `<div class="psub mono">${esc(cur.stop_code)}</div>` : ""}
+      ${next ? `<div class="psub">Next: ${esc(next.stop_name || next.stop_id)}</div>` : `<div class="psub">Last stop on this trip</div>`}
+      <div class="trip-nav">
+        ${prev ? `<a class="btn out" href="${tripStepHref(data.trip_id, prev)}">← Previous</a>` : `<span class="btn out" aria-disabled="true">← Previous</span>`}
+        ${next ? `<a class="btn" href="${tripStepHref(data.trip_id, next)}">Next stop →</a>` : `<span class="btn" aria-disabled="true">Next stop →</span>`}
+      </div>
+    </div>
+    <div class="list trip-list">${stops.map((s, i) => `
+      <a class="row-card trip-row${i === idx ? " current" : ""}${i < idx ? " done" : ""}" href="${tripStepHref(data.trip_id, s)}"${i === idx ? ' aria-current="step"' : ""}>
+        <span class="num${i === idx ? " first" : ""}" aria-hidden="true">${i + 1}</span>
+        <div class="grow"><div class="title">${esc(s.stop_name || s.stop_id)}</div><div class="sub mono">${esc(s.stop_code || s.stop_id)}</div></div>
+        ${i === idx ? '<span class="badge live">HERE</span>' : ""}
+      </a>`).join("")}
+    </div>`;
 }
 
 // ══════════ SAVED ══════════
