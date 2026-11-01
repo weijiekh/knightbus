@@ -95,6 +95,14 @@ a { color: var(--accent); }
 .map-card { margin: 0 20px; height: 150px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg2); position: relative; overflow: hidden; transition: height 0.25s ease; }
 .map-card.tall { height: 380px; }
 #map { position: absolute; inset: 0; background: var(--bg2); }
+#stop-map { position: absolute; inset: 0; background: var(--bg2); }
+.map-msg { position: absolute; inset: 0; z-index: 500; display: grid; place-items: center; background: var(--bg2); color: var(--text2); font-size: 14px; }
+.map-msg[hidden] { display: none; }
+.view-toggle { display: flex; margin: 0 20px 12px; padding: 3px; border-radius: 12px; background: var(--surface2); }
+.view-toggle button { flex: 1; min-height: 36px; border: 0; border-radius: 9px; background: none; color: var(--text2); font-weight: 600; font-size: 13px; cursor: pointer; }
+.view-toggle button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.stop-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
+[data-theme="dark"] #stop-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 [data-theme="dark"] #map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 .map-expand { position: absolute; right: 10px; bottom: 10px; z-index: 500; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; }
 .leaflet-container { font-family: 'DM Sans', system-ui, sans-serif; }
@@ -644,7 +652,7 @@ let map = null;
 function mapOptions() {
   return { zoomControl: true, attributionControl: true, scrollWheelZoom: matchMedia("(pointer: fine)").matches };
 }
-function destroyMap() { if (map) { map.remove(); map = null; } }
+function destroyMap() { if (map) { map.remove(); map = null; } destroyStopMap(); }
 function whenLeaflet(cb) {
   if (window.L) return cb();
   const s = document.querySelector('script[src*="leaflet"]');
@@ -688,7 +696,53 @@ function applyMapSize() {
 // If Leaflet never loads, the map card simply stays hidden.
 
 // ══════════ STOP VIEW ══════════
-const stopState = { id: null, data: null, showAll: false, at: 0 };
+const stopState = { id: null, data: null, showAll: false, at: 0, mode: "list" };
+// Stop map: list/map toggle. Coordinates come from the ETA response or stored stop metadata.
+let stopMap = null, stopMapId = null;
+function destroyStopMap() { if (stopMap) { stopMap.remove(); stopMap = null; stopMapId = null; } }
+function stopCoords(id) {
+  const d = stopState.data;
+  if (d?.lat != null && d?.lon != null) return { lat: d.lat, lon: d.lon };
+  const m = S.stopMeta[id];
+  return m?.lat != null ? { lat: m.lat, lon: m.lon } : null;
+}
+function setStopView(mode) {
+  stopState.mode = mode;
+  document.querySelectorAll("[data-sv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.sv === mode)));
+  const card = $("#stop-map-card"), body = $("#stop-body");
+  if (!card || !body) return;
+  card.hidden = mode !== "map";
+  body.hidden = mode === "map";
+  if (mode === "map") drawStopMap(); else destroyStopMap();
+}
+function drawStopMap() {
+  whenLeaflet(() => {
+    const id = stopState.id, el = $("#stop-map"), msg = $("#stop-map-msg");
+    if (!el || !msg || stopState.mode !== "map" || !window.L || id !== currentRoute?.id) return;
+    const c = stopCoords(id);
+    msg.hidden = !!c;
+    if (!c) return;
+    if (stopMap && stopMapId === id) return; // keep user's pan/zoom across live refreshes
+    destroyStopMap();
+    stopMapId = id;
+    stopMap = L.map("stop-map", mapOptions());
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(stopMap);
+    const { code, name } = stopDisplay(id);
+    const pts = [[c.lat, c.lon]];
+    L.marker([c.lat, c.lon], {
+      icon: L.divIcon({ className: "", html: '<div class="stop-dot"></div>', iconSize: [24, 24], iconAnchor: [12, 12] }),
+      title: name, alt: name,
+    }).addTo(stopMap).bindPopup(`<strong>${esc(name)}</strong><br><span class="mono">${esc(code || id)}</span><br><span class="mono">${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}</span>`).openPopup();
+    if (S.loc) {
+      pts.push([S.loc.lat, S.loc.lon]);
+      L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false, title: "You are here" }).addTo(stopMap);
+    }
+    if (pts.length > 1) stopMap.fitBounds(pts, { padding: [40, 40], maxZoom: 17 });
+    else stopMap.setView(pts[0], 17);
+  });
+}
 function isSaved(id) { return S.saved.includes(id); }
 function toggleSaved(id) {
   S.saved = isSaved(id) ? S.saved.filter(x => x !== id) : [...S.saved, id];
@@ -697,6 +751,18 @@ function toggleSaved(id) {
   if (b) { b.innerHTML = I.star(isSaved(id)); b.classList.toggle("on", isSaved(id)); b.setAttribute("aria-pressed", String(isSaved(id))); b.setAttribute("aria-label", isSaved(id) ? "Remove from saved" : "Save stop"); }
 }
 function goBack() { if (history.length > 1) history.back(); else location.hash = "#/"; }
+function isSaved(id) { return S.saved.includes(id); }
+function toggleSaved(id) {
+  S.saved = isSaved(id) ? S.saved.filter(x => x !== id) : [...S.saved, id];
+  save("kb-saved", S.saved);
+  const b = $("#save-btn");
+  if (b) { b.innerHTML = I.star(isSaved(id)); b.classList.toggle("on", isSaved(id)); b.setAttribute("aria-pressed", String(isSaved(id))); b.setAttribute("aria-label", isSaved(id) ? "Remove from saved" : "Save stop"); }
+}
+function goBack() { if (history.length > 1) history.back(); else location.hash = "#/"; }
+view.addEventListener("click", e => {
+  const sv = e.target.closest("[data-sv]");
+  if (sv) setStopView(sv.dataset.sv);
+});
 function stopHeadText(id) {
   const { code, name } = stopDisplay(id);
   const d = stopDistance(id);
@@ -704,7 +770,8 @@ function stopHeadText(id) {
   return { name, meta };
 }
 function renderStop({ id }) {
-  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; }
+  destroyStopMap();
+  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; stopState.mode = "list"; }
   const { name, meta } = stopHeadText(id);
   const saved = isSaved(id);
   view.innerHTML = `
@@ -719,7 +786,16 @@ function renderStop({ id }) {
       <h1>${esc(name)}</h1>
       <div class="fresh" id="fresh"></div>
     </div>
+    <div class="view-toggle" role="group" aria-label="Stop view">
+      <button type="button" data-sv="list" aria-pressed="true">List</button>
+      <button type="button" data-sv="map" aria-pressed="false">Map</button>
+    </div>
+    <div class="map-card tall" id="stop-map-card" hidden>
+      <div id="stop-map" role="region" aria-label="Map of this stop"></div>
+      <div class="map-msg" id="stop-map-msg" hidden>Stop location unknown</div>
+    </div>
     <div id="stop-body"></div>`;
+  setStopView(stopState.mode);
   if (stopState.data) renderStopBody(); else loadStop(id);
 }
 async function loadStop(id, silent) {
@@ -736,7 +812,7 @@ async function loadStop(id, silent) {
       head.querySelector("h1").textContent = name;
     }
   } catch { /* keep last data; banner shows offline */ }
-  if (S.view === "stop" && currentRoute.id === id) renderStopBody();
+  if (S.view === "stop" && currentRoute.id === id) { renderStopBody(); if (stopState.mode === "map") drawStopMap(); }
 }
 function renderStopBody() {
   const body = $("#stop-body"), fresh = $("#fresh");
