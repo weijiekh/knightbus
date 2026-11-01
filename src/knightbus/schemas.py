@@ -87,3 +87,20 @@ class WalkRouteResponse(BaseModel):
     distance_m: float
     duration_s: float
     geometry: list[list[float]]  # [[lat, lon], ...]
+
+
+class TripStop(BaseModel):
+    stop_id: str
+    stop_sequence: int
+    stop_code: str | None = None
+    stop_name: str | None = None
+    lat: float | None = None
+    lon: float | None = None
+
+
+class TripStopsResponse(BaseModel):
+    trip_id: str
+    route_id: str | None = None
+    route_short_name: str | None = None
+    headsign: str | None = None
+    stops: list[TripStop]
