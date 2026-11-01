@@ -230,6 +230,15 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .route-filter button { flex: none; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font: 600 13px 'IBM Plex Mono', monospace; cursor: pointer; }
 .route-filter button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .saved-item.dragging .drag-handle { cursor: grabbing; }
+/* Drag handles only show in reorder mode (toggled by the Reorder button) */
+.drag-handle { display: none; }
+#saved-list.reordering .drag-handle { display: grid; }
+.saved-card { flex-direction: column; align-items: stretch; gap: 10px; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 20px; }
+.page-head .page-title { flex: 1; min-width: 0; }
+.reorder-btn { min-height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; flex-shrink: 0; }
+.reorder-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.reorder-btn[hidden] { display: none; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -1085,7 +1094,7 @@ function openRecent(r) {
 // ══════════ SAVED ══════════
 const savedState = { etas: {} };
 function renderSaved() {
-  view.innerHTML = `<h1 class="page-title">Saved stops</h1><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="route-filter" id="saved-routes" role="group" aria-label="Filter by route"></div><div class="list" id="saved-list"></div>`;
+  view.innerHTML = `<div class="page-head"><h1 class="page-title">Saved stops</h1><button type="button" class="reorder-btn" id="reorder-btn" aria-pressed="false" hidden>Reorder</button></div><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="route-filter" id="saved-routes" role="group" aria-label="Filter by route"></div><div class="list" id="saved-list"></div>`;
   drawSaved();
   if (S.saved.length) loadSaved();
 }
@@ -1094,6 +1103,16 @@ async function loadSaved() {
   const results = await Promise.all(S.saved.map(id => fetchEtas(id).catch(() => savedState.etas[id] ?? null)));
   S.saved.forEach((id, i) => { savedState.etas[id] = results[i]; });
   if (S.view === "saved") drawSaved();
+}
+let savedReorder = false; // drag handles shown only while true (Reorder button)
+function toggleSavedReorder() {
+  savedReorder = !savedReorder;
+  syncSavedReorder();
+}
+function syncSavedReorder() {
+  const b = $("#reorder-btn");
+  if (b) { b.hidden = !S.saved.length; b.setAttribute("aria-pressed", String(savedReorder)); b.textContent = savedReorder ? "Done" : "Reorder"; }
+  $("#saved-list")?.classList.toggle("reordering", savedReorder && S.saved.length > 0);
 }
 let savedRoute = load("kb-saved-route", null); // selected route label, null = all
 function setSavedRoute(label) {
@@ -1118,6 +1137,8 @@ function drawSaved() {
   if (!list || savedDrag) return; // keep DOM stable while a drag is in progress
   if (!S.saved.length) {
     if (bar) bar.hidden = true;
+    savedReorder = false;
+    syncSavedReorder();
     list.innerHTML = `<div class="panel dashed" style="margin:0">${I.star(false)}<div class="ptitle">No saved stops yet</div>
       <div class="psub">Open a stop and tap the star to save it.</div><a class="btn" href="#/" style="display:inline-flex;align-items:center;text-decoration:none">Find nearby stops</a></div>`;
     return;
@@ -1134,19 +1155,22 @@ function drawSaved() {
   const note = savedRoute && hidden > 0
     ? `<button type="button" class="more" data-route-chip="">${hidden} saved stop${hidden === 1 ? "" : "s"} without ${esc(savedRoute)} hidden · Show all</button>` : "";
   list.innerHTML = cards + note;
+  syncSavedReorder();
 }
+// Top 1–2 routes with their next arrival; same card shape as nearby so all cards match in size.
 function savedCard(id, route) {
   const { code, name } = stopDisplay(id);
   const eta = savedState.etas[id];
-  let next = `<span class="quiet">…</span>`;
-  if (eta === null) next = `<span class="quiet">unavailable</span>`;
-  else if (eta) {
+  let foot;
+  if (eta === undefined) foot = `<span class="quiet">Loading arrivals…</span>`;
+  else if (eta === null) foot = `<span class="quiet">Arrivals unavailable</span>`;
+  else {
     const items = upcoming(eta).filter(it => !route || routeLabel(it) === route);
-    const first = items[0];
-    next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>`
-      : `<span class="quiet">${route ? `No upcoming ${esc(route)}` : "No buses"}</span>`;
+    const perRoute = firstBusPerRoute(items).slice(0, 2);
+    foot = perRoute.length ? `<div class="chips">${perRoute.map(arrivalChip).join("")}</div>`
+      : `<span class="quiet">${route ? `No upcoming ${esc(route)}` : "No upcoming buses"}</span>`;
   }
-  return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a></div>`;
+  return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card saved-card" href="#/stop/${encodeURIComponent(id)}"><div class="stop-row"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${I.chev}</div><div class="card-foot">${foot}</div></a></div>`;
 }
 // Saved-stop reordering: drag the grip handle (pointer), or focus it and use arrow keys.
 let savedDrag = null;
@@ -1193,6 +1217,7 @@ const endSavedDrag = e => {
 view.addEventListener("click", e => {
   const chip = e.target.closest("[data-route-chip]");
   if (chip) setSavedRoute(chip.dataset.routeChip);
+  if (e.target.closest("#reorder-btn")) toggleSavedReorder();
   const sv = e.target.closest("[data-sv]");
   if (sv) setStopView(sv.dataset.sv);
   const hv = e.target.closest("[data-hv]");
