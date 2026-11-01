@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=3, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=2, alias="DB_MAX_OVERFLOW")
     persist_raw_snapshots: bool = Field(default=False, alias="PERSIST_RAW_SNAPSHOTS")
+    ors_api_key: str | None = Field(default=None, alias="ORS_API_KEY")
+    ors_base_url: str = Field(default="https://api.openrouteservice.org", alias="ORS_BASE_URL")
     raw_snapshot_retention_days: int = Field(default=1, alias="RAW_SNAPSHOT_RETENTION_DAYS")
 
     @field_validator("gtfs_service_timezone")

@@ -81,3 +81,9 @@ class SearchResponse(BaseModel):
     query: str
     stops: list[SearchStop]
     routes: list[SearchRoute]
+
+
+class WalkRouteResponse(BaseModel):
+    distance_m: float
+    duration_s: float
+    geometry: list[list[float]]  # [[lat, lon], ...]

@@ -122,6 +122,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
           API_TAG: ${{ github.sha }}
+          ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -133,7 +134,7 @@ jobs:
           ssh-keyscan -T 10 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
           {
-            printf 'GHCR_TOKEN=%q\nGHCR_USER=%q\nAPI_TAG=%q\n' "$GHCR_TOKEN" "$GHCR_USER" "$API_TAG"
+            printf 'GHCR_TOKEN=%q\nGHCR_USER=%q\nAPI_TAG=%q\nORS_API_KEY=%q\n' "$GHCR_TOKEN" "$GHCR_USER" "$API_TAG" "$ORS_API_KEY"
             cat <<'REMOTE'
           set -euo pipefail
           cd ~/knightbus
@@ -145,6 +146,13 @@ jobs:
           # Record the deployed tag so a manual `docker compose up` later
           # keeps running this image, not whatever :latest became.
           sed -i "s/^API_TAG=.*/API_TAG=${API_TAG}/" .env
+
+          # Sync the walking-route key from the GitHub secret. Empty disables /v1/walk.
+          if grep -q '^ORS_API_KEY=' .env; then
+            sed -i "s|^ORS_API_KEY=.*|ORS_API_KEY=${ORS_API_KEY}|" .env
+          else
+            echo "ORS_API_KEY=${ORS_API_KEY}" >> .env
+          fi
 
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
           docker compose pull api
