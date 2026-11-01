@@ -628,13 +628,13 @@ function setHomeMode(mode) {
   document.querySelectorAll("[data-hv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.hv === S.homeMode)));
   const body = $("#home-body"), card = $("#map-card"), btn = $("#map-expand");
   const isMap = S.homeMode === "map";
-  if (body) body.hidden = isMap && !!S.nearby;
+  if (body) body.hidden = isMap && !!S.loc; // map mode: no list skeleton under the map while stops load
   if (card) card.classList.toggle("fill", isMap);
   if (!isMap && card) card.style.height = "";
   if (btn) btn.hidden = isMap; // Expand is for the list-mode preview only
   if (isMap) window.scrollTo(0, 0);
   fitFillCards();
-  if (S.nearby) drawMap();
+  if (S.loc) drawMap();
 }
 function applyMapSize() {
   const card = $("#map-card"), btn = $("#map-expand");
@@ -712,6 +712,7 @@ async function loadNearby(silent) {
   if (!S.loc) return;
   const seq = ++nearbySeq;
   S.lastLoadAt = Date.now();
+  if (!map) drawMap(); // show the map as soon as location is known, before stop data arrives
   if (!silent || !S.nearby) renderHomeBody({ loading: true });
   let stops;
   try {
@@ -744,9 +745,10 @@ function whenLeaflet(cb) {
 function drawMap() {
   whenLeaflet(() => {
     const card = $("#map-card");
-    if (!card || !window.L || !S.nearby || !S.loc) return;
+    if (!card || !window.L || !S.loc) return; // draws as soon as location is known; stop pins are added when they arrive
     card.hidden = false;
     card.classList.toggle("tall", S.mapExpanded && S.homeMode !== "map");
+    fitFillCards(); // size after un-hiding, otherwise a fill card keeps its default height and leaves empty space
     destroyMap();
     map = L.map("map", mapOptions());
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -754,7 +756,7 @@ function drawMap() {
     }).addTo(map);
     const pts = [[S.loc.lat, S.loc.lon]];
     L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false, title: "You are here" }).addTo(map);
-    S.nearby.forEach(({ stop }, i) => {
+    (S.nearby || []).forEach(({ stop }, i) => {
       if (stop.lat == null) return;
       pts.push([stop.lat, stop.lon]);
       const m = L.marker([stop.lat, stop.lon], {
