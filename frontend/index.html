@@ -95,10 +95,21 @@ a { color: var(--accent); }
 .map-card { margin: 0 20px; height: 150px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg2); position: relative; overflow: hidden; transition: height 0.25s ease; }
 .map-card.tall { height: 380px; }
 #map { position: absolute; inset: 0; background: var(--bg2); }
+#stop-map { position: absolute; inset: 0; background: var(--bg2); }
+.map-msg { position: absolute; inset: 0; z-index: 500; display: grid; place-items: center; background: var(--bg2); color: var(--text2); font-size: 14px; }
+.map-msg[hidden] { display: none; }
+.view-toggle { display: flex; margin: 0 20px 12px; padding: 3px; border-radius: 12px; background: var(--surface2); }
+.view-toggle button { flex: 1; min-height: 36px; border: 0; border-radius: 9px; background: none; color: var(--text2); font-weight: 600; font-size: 13px; cursor: pointer; }
+.view-toggle button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.stop-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
+[data-theme="dark"] #stop-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 [data-theme="dark"] #map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 .map-expand { position: absolute; right: 10px; bottom: 10px; z-index: 500; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; }
 .leaflet-container { font-family: 'DM Sans', system-ui, sans-serif; }
 .leaflet-control-attribution { font-size: 10px; }
+.leaflet-bar a { background: var(--surface); color: var(--text); border-color: var(--border2); }
+.leaflet-bar a:hover { background: var(--surface2); }
+.leaflet-bar a.leaflet-disabled { color: var(--text2); }
 .pin { padding: 3px 7px; border-radius: 8px; background: var(--text); color: var(--bg); font: 700 11px 'IBM Plex Mono', monospace; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.35); white-space: nowrap; }
 .pin.first { background: var(--accent); color: var(--on-accent); }
 .me-dot { width: 22px; height: 22px; border-radius: 50%; background: rgba(91,156,246,0.25); display: flex; align-items: center; justify-content: center; }
@@ -198,6 +209,17 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .page-title { padding: 18px 20px 4px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
 .page-sub { padding: 0 20px 12px; font-size: 13px; color: var(--text2); }
 .row-card { text-decoration: none; color: inherit; display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); }
+.saved-item { display: flex; align-items: center; gap: 6px; }
+.saved-item .row-card { flex: 1; min-width: 0; }
+.drag-handle { flex: none; width: 36px; min-height: 44px; display: grid; place-items: center; background: none; border: 0; border-radius: 10px; color: var(--text2); cursor: grab; touch-action: none; }
+.drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.saved-item.dragging { opacity: 0.6; }
+.route-filter { display: flex; gap: 8px; overflow-x: auto; padding: 0 20px 12px; scrollbar-width: none; }
+.route-filter::-webkit-scrollbar { display: none; }
+.route-filter[hidden] { display: none; }
+.route-filter button { flex: none; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font: 600 13px 'IBM Plex Mono', monospace; cursor: pointer; }
+.route-filter button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.saved-item.dragging .drag-handle { cursor: grabbing; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -255,6 +277,7 @@ const I = {
   busLine: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="15" rx="3"/><path d="M4 11h16"/><circle cx="8" cy="15" r="1"/><circle cx="16" cy="15" r="1"/><path d="M7 18v2M17 18v2"/></svg>',
   search: '<svg class="lead" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   gps: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>',
+  grip: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>',
   chev: '<svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
   back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>',
   star: (on) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="m12 17.3-5.4 3 1-6.1L3.2 9.9l6.1-.9L12 3.5l2.7 5.5 6.1.9-4.4 4.3 1 6.1z"/></svg>`,
@@ -637,7 +660,11 @@ async function loadNearby(silent) {
 
 // ══════════ MAP ══════════
 let map = null;
-function destroyMap() { if (map) { map.remove(); map = null; } }
+// Zoom buttons always on. Mouse wheel zooms only on fine pointers (desktop), so touch page scroll is not hijacked.
+function mapOptions() {
+  return { zoomControl: true, attributionControl: true, scrollWheelZoom: matchMedia("(pointer: fine)").matches };
+}
+function destroyMap() { if (map) { map.remove(); map = null; } destroyStopMap(); }
 function whenLeaflet(cb) {
   if (window.L) return cb();
   const s = document.querySelector('script[src*="leaflet"]');
@@ -651,7 +678,7 @@ function drawMap() {
     card.hidden = false;
     card.classList.toggle("tall", S.mapExpanded);
     destroyMap();
-    map = L.map("map", { zoomControl: false, attributionControl: true, scrollWheelZoom: false });
+    map = L.map("map", mapOptions());
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(map);
@@ -681,7 +708,53 @@ function applyMapSize() {
 // If Leaflet never loads, the map card simply stays hidden.
 
 // ══════════ STOP VIEW ══════════
-const stopState = { id: null, data: null, showAll: false, at: 0 };
+const stopState = { id: null, data: null, showAll: false, at: 0, mode: "list" };
+// Stop map: list/map toggle. Coordinates come from the ETA response or stored stop metadata.
+let stopMap = null, stopMapId = null;
+function destroyStopMap() { if (stopMap) { stopMap.remove(); stopMap = null; stopMapId = null; } }
+function stopCoords(id) {
+  const d = stopState.data;
+  if (d?.lat != null && d?.lon != null) return { lat: d.lat, lon: d.lon };
+  const m = S.stopMeta[id];
+  return m?.lat != null ? { lat: m.lat, lon: m.lon } : null;
+}
+function setStopView(mode) {
+  stopState.mode = mode;
+  document.querySelectorAll("[data-sv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.sv === mode)));
+  const card = $("#stop-map-card"), body = $("#stop-body");
+  if (!card || !body) return;
+  card.hidden = mode !== "map";
+  body.hidden = mode === "map";
+  if (mode === "map") drawStopMap(); else destroyStopMap();
+}
+function drawStopMap() {
+  whenLeaflet(() => {
+    const id = stopState.id, el = $("#stop-map"), msg = $("#stop-map-msg");
+    if (!el || !msg || stopState.mode !== "map" || !window.L || id !== currentRoute?.id) return;
+    const c = stopCoords(id);
+    msg.hidden = !!c;
+    if (!c) return;
+    if (stopMap && stopMapId === id) return; // keep user's pan/zoom across live refreshes
+    destroyStopMap();
+    stopMapId = id;
+    stopMap = L.map("stop-map", mapOptions());
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(stopMap);
+    const { code, name } = stopDisplay(id);
+    const pts = [[c.lat, c.lon]];
+    L.marker([c.lat, c.lon], {
+      icon: L.divIcon({ className: "", html: '<div class="stop-dot"></div>', iconSize: [24, 24], iconAnchor: [12, 12] }),
+      title: name, alt: name,
+    }).addTo(stopMap).bindPopup(`<strong>${esc(name)}</strong><br><span class="mono">${esc(code || id)}</span><br><span class="mono">${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}</span>`).openPopup();
+    if (S.loc) {
+      pts.push([S.loc.lat, S.loc.lon]);
+      L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false, title: "You are here" }).addTo(stopMap);
+    }
+    if (pts.length > 1) stopMap.fitBounds(pts, { padding: [40, 40], maxZoom: 17 });
+    else stopMap.setView(pts[0], 17);
+  });
+}
 function isSaved(id) { return S.saved.includes(id); }
 function toggleSaved(id) {
   S.saved = isSaved(id) ? S.saved.filter(x => x !== id) : [...S.saved, id];
@@ -697,7 +770,8 @@ function stopHeadText(id) {
   return { name, meta };
 }
 function renderStop({ id }) {
-  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; }
+  destroyStopMap();
+  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; stopState.mode = "list"; }
   const { name, meta } = stopHeadText(id);
   const saved = isSaved(id);
   view.innerHTML = `
@@ -712,7 +786,16 @@ function renderStop({ id }) {
       <h1>${esc(name)}</h1>
       <div class="fresh" id="fresh"></div>
     </div>
+    <div class="view-toggle" role="group" aria-label="Stop view">
+      <button type="button" data-sv="list" aria-pressed="true">List</button>
+      <button type="button" data-sv="map" aria-pressed="false">Map</button>
+    </div>
+    <div class="map-card tall" id="stop-map-card" hidden>
+      <div id="stop-map" role="region" aria-label="Map of this stop"></div>
+      <div class="map-msg" id="stop-map-msg" hidden>Stop location unknown</div>
+    </div>
     <div id="stop-body"></div>`;
+  setStopView(stopState.mode);
   if (stopState.data) renderStopBody(); else loadStop(id);
 }
 async function loadStop(id, silent) {
@@ -729,7 +812,7 @@ async function loadStop(id, silent) {
       head.querySelector("h1").textContent = name;
     }
   } catch { /* keep last data; banner shows offline */ }
-  if (S.view === "stop" && currentRoute.id === id) renderStopBody();
+  if (S.view === "stop" && currentRoute.id === id) { renderStopBody(); if (stopState.mode === "map") drawStopMap(); }
 }
 function renderStopBody() {
   const body = $("#stop-body"), fresh = $("#fresh");
@@ -950,7 +1033,7 @@ function openRecent(r) {
 // ══════════ SAVED ══════════
 const savedState = { etas: {} };
 function renderSaved() {
-  view.innerHTML = `<h1 class="page-title">Saved stops</h1><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="list" id="saved-list"></div>`;
+  view.innerHTML = `<h1 class="page-title">Saved stops</h1><p class="page-sub">Tap the star on a stop to keep it here.</p><div class="route-filter" id="saved-routes" role="group" aria-label="Filter by route"></div><div class="list" id="saved-list"></div>`;
   drawSaved();
   if (S.saved.length) loadSaved();
 }
@@ -960,26 +1043,126 @@ async function loadSaved() {
   S.saved.forEach((id, i) => { savedState.etas[id] = results[i]; });
   if (S.view === "saved") drawSaved();
 }
+let savedRoute = load("kb-saved-route", null); // selected route label, null = all
+function setSavedRoute(label) {
+  savedRoute = label || null;
+  save("kb-saved-route", savedRoute);
+  drawSaved();
+}
+function savedRouteLabels() {
+  const set = new Set();
+  for (const id of S.saved) (savedState.etas[id]?.items || []).forEach(it => set.add(routeLabel(it)));
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+// Unknown (not loaded yet) stays visible; unavailable or no-match is hidden in route mode.
+function servesRoute(id, route) {
+  const eta = savedState.etas[id];
+  if (eta === undefined) return true;
+  if (!eta) return false;
+  return (eta.items || []).some(it => routeLabel(it) === route);
+}
 function drawSaved() {
-  const list = $("#saved-list");
-  if (!list) return;
+  const list = $("#saved-list"), bar = $("#saved-routes");
+  if (!list || savedDrag) return; // keep DOM stable while a drag is in progress
   if (!S.saved.length) {
+    if (bar) bar.hidden = true;
     list.innerHTML = `<div class="panel dashed" style="margin:0">${I.star(false)}<div class="ptitle">No saved stops yet</div>
       <div class="psub">Open a stop and tap the star to save it.</div><a class="btn" href="#/" style="display:inline-flex;align-items:center;text-decoration:none">Find nearby stops</a></div>`;
     return;
   }
-  list.innerHTML = S.saved.map(id => {
-    const { code, name } = stopDisplay(id);
-    const eta = savedState.etas[id];
-    let next = `<span class="quiet">…</span>`;
-    if (eta === null) next = `<span class="quiet">unavailable</span>`;
-    else if (eta) {
-      const first = upcoming(eta)[0];
-      next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>` : `<span class="quiet">No buses</span>`;
-    }
-    return `<a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a>`;
-  }).join("");
+  const labels = savedRouteLabels();
+  if (bar) {
+    bar.hidden = labels.length === 0;
+    bar.innerHTML = labels.length ? [null, ...labels].map(l => `<button type="button" data-route-chip="${esc(l || "")}" aria-pressed="${(savedRoute || null) === l}">${l ? esc(l) : "All"}</button>`).join("") : "";
+  }
+  // Route mode keeps the user's saved order (drag to prioritize) and shows only that route's arrivals.
+  const ids = savedRoute ? S.saved.filter(id => servesRoute(id, savedRoute)) : S.saved;
+  const hidden = S.saved.length - ids.length;
+  const cards = ids.map(id => savedCard(id, savedRoute)).join("");
+  const note = savedRoute && hidden > 0
+    ? `<button type="button" class="more" data-route-chip="">${hidden} saved stop${hidden === 1 ? "" : "s"} without ${esc(savedRoute)} hidden · Show all</button>` : "";
+  list.innerHTML = cards + note;
 }
+function savedCard(id, route) {
+  const { code, name } = stopDisplay(id);
+  const eta = savedState.etas[id];
+  let next = `<span class="quiet">…</span>`;
+  if (eta === null) next = `<span class="quiet">unavailable</span>`;
+  else if (eta) {
+    const items = upcoming(eta).filter(it => !route || routeLabel(it) === route);
+    const first = items[0];
+    next = first ? `<span class="route-badge sm">${esc(routeLabel(first))}</span><span class="chip" style="flex:none;background:none;padding:0"><span class="m${isLive(first) ? " soon" : ""}">${esc(fmtArrival(first))}</span></span>`
+      : `<span class="quiet">${route ? `No upcoming ${esc(route)}` : "No buses"}</span>`;
+  }
+  return `<div class="saved-item" data-id="${esc(id)}"><button type="button" class="drag-handle" aria-label="Reorder ${esc(name)}" title="Drag to reorder">${I.grip}</button><a class="row-card" href="#/stop/${encodeURIComponent(id)}"><div class="grow"><div class="title">${esc(name)}</div><div class="sub mono">${esc(code || id)}</div></div>${next}${I.chev}</a></div>`;
+}
+// Saved-stop reordering: drag the grip handle (pointer), or focus it and use arrow keys.
+let savedDrag = null;
+function commitSavedOrder() {
+  const order = [...document.querySelectorAll("#saved-list .saved-item")].map(el => el.dataset.id);
+  const visible = new Set(order);
+  if (visible.size !== order.length || S.saved.filter(id => visible.has(id)).length !== order.length) return;
+  // Visible stops take the saved slots in their new order; hidden stops keep their positions.
+  let k = 0;
+  S.saved = S.saved.map(id => visible.has(id) ? order[k++] : id);
+  save("kb-saved", S.saved);
+}
+view.addEventListener("pointerdown", e => {
+  const handle = e.target.closest(".drag-handle");
+  if (!handle || e.button > 0) return;
+  const item = handle.closest(".saved-item");
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);
+  savedDrag = { item, pointerId: e.pointerId };
+  item.classList.add("dragging");
+});
+view.addEventListener("pointermove", e => {
+  if (!savedDrag || e.pointerId !== savedDrag.pointerId) return;
+  const { item } = savedDrag;
+  const parent = item.parentElement;
+  let best = null, bestDist = Infinity;
+  for (const el of parent.children) {
+    if (el === item) continue;
+    const r = el.getBoundingClientRect();
+    const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+    if (d < bestDist) { bestDist = d; best = el; }
+  }
+  if (!best) return;
+  const r = best.getBoundingClientRect();
+  const target = e.clientY < r.top + r.height / 2 ? best : best.nextElementSibling;
+  if (target !== item) parent.insertBefore(item, target);
+});
+const endSavedDrag = e => {
+  if (!savedDrag || e.pointerId !== savedDrag.pointerId) return;
+  savedDrag.item.classList.remove("dragging");
+  savedDrag = null;
+  commitSavedOrder();
+};
+view.addEventListener("click", e => {
+  const chip = e.target.closest("[data-route-chip]");
+  if (chip) setSavedRoute(chip.dataset.routeChip);
+  const sv = e.target.closest("[data-sv]");
+  if (sv) setStopView(sv.dataset.sv);
+});
+view.addEventListener("pointerup", endSavedDrag);
+view.addEventListener("pointercancel", endSavedDrag);
+view.addEventListener("keydown", e => {
+  const handle = e.target.closest?.(".drag-handle");
+  if (!handle) return;
+  const item = handle.closest(".saved-item");
+  if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+    const prev = item.previousElementSibling;
+    if (!prev) return;
+    prev.before(item);
+  } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+    const next = item.nextElementSibling;
+    if (!next) return;
+    next.after(item);
+  } else return;
+  e.preventDefault();
+  commitSavedOrder();
+  handle.focus();
+});
 
 // ══════════ ROUTES ══════════
 function renderRoutes() {
