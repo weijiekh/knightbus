@@ -12,6 +12,7 @@ from knightbus.predictor import ETAPredictor
 from knightbus.models import Stop
 from knightbus.search import search as search_stops_and_routes, split_stop_name
 from knightbus.schemas import HealthResponse, SearchResponse, StopEtaResponse, StopResponse, TripStopsResponse, VehicleResponse, WalkRouteResponse
+from knightbus.vehicles import route_vehicles as list_route_vehicles
 from knightbus.trips import get_trip_stops
 from knightbus.walking import WalkingError, WalkingUnavailable, in_service_area, walking_route
 
@@ -137,19 +138,7 @@ def walk(
 
 @app.get("/v1/routes/{route_id}/vehicles", response_model=list[VehicleResponse])
 def route_vehicles(route_id: str, db: Session = Depends(get_db)) -> list[VehicleResponse]:
-    return [
-        VehicleResponse(
-            vehicle_id=row.vehicle_id,
-            route_id=row.route_id,
-            trip_id=row.trip_id,
-            stop_id=row.stop_id,
-            current_stop_sequence=row.current_stop_sequence,
-            lat=row.lat,
-            lon=row.lon,
-            observed_at=row.observed_at,
-        )
-        for row in predictor.list_route_vehicles(db, route_id)
-    ]
+    return list_route_vehicles(db, route_id)
 
 
 @app.get("/v1/models/current")

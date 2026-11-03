@@ -30,6 +30,9 @@ class StopEtaResponse(BaseModel):
 
 
 class VehicleResponse(BaseModel):
+    headsign: str | None = None
+    direction_id: int | None = None
+    stop_name: str | None = None
     vehicle_id: str
     route_id: str | None = None
     trip_id: str | None = None
