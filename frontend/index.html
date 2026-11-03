@@ -1044,7 +1044,7 @@ function arrivalCard(group) {
 }
 
 // ══════════ SEARCH ══════════
-const searchState = { q: "", stops: [], routes: [], places: [], filter: "all", ctrl: { api: null, places: null }, timers: {}, lastNominatimAt: 0, loading: false };
+const searchState = { q: "", stops: [], routes: [], places: [], filter: "all", ctrl: { api: null, places: null }, timers: {}, lastNominatimAt: 0, loading: false, error: false };
 function renderSearch({ q }) {
   view.innerHTML = `
     <div class="search-bar">
@@ -1074,6 +1074,7 @@ function onQuery(raw, immediate) {
   history.replaceState(null, "", "#/search" + (raw ? "/" + encodeURIComponent(raw) : ""));
   if (q !== searchState.q) { searchState.stops = []; searchState.routes = []; searchState.places = []; }
   searchState.q = q;
+  searchState.error = false;
   clearTimeout(searchState.timers.api); clearTimeout(searchState.timers.places);
   searchState.ctrl.api?.abort(); searchState.ctrl.places?.abort();
   if (q.length < 2) { renderResults(); return; }
@@ -1096,7 +1097,10 @@ async function searchApi(q) {
     searchState.stops = res.stops || []; searchState.routes = res.routes || [];
     searchState.stops.forEach(s => rememberStop({ ...s, raw_name: (s.code ? s.code + " " : "") + s.name }));
     searchState.routes.forEach(r => { S.routeMeta[r.route_id] = r; });
-  } catch (err) { if (err.name === "AbortError") return; }
+  } catch (err) {
+    if (err.name === "AbortError" || q !== searchState.q) return;
+    searchState.error = true;
+  }
   searchState.loading = false;
   if (S.view === "search") renderResults();
 }
@@ -1141,7 +1145,10 @@ function renderResults() {
       if (r.kind !== last) { html += `<div class="group-label">${{ stop: "Stops", route: "Routes", place: "Places" }[r.kind]}</div>`; last = r.kind; }
       html += resultRow(r, q);
     }
-    results.innerHTML = html || `<p class="quiet" style="padding:4px">${searchState.loading ? "Searching…" : `No matches for “${esc(q)}”.`}</p>`;
+    const error = searchState.error ? `<div class="panel dashed" style="margin:8px 0"><div class="ptitle">Stop and route search unavailable</div><div class="psub">Check your connection and try again. Place results may still be available.</div><button type="button" class="btn out" id="retry-search">Retry search</button></div>` : "";
+    results.innerHTML = error + (html || (searchState.error ? "" : `<p class="quiet" style="padding:4px">${searchState.loading ? "Searching…" : `No matches for “${esc(q)}”.`}</p>`));
+    const retry = $("#retry-search");
+    if (retry) retry.onclick = () => onQuery(searchState.q, true);
     results.querySelectorAll("[data-i]").forEach((el, i) => { el.dataset.i = i; el.addEventListener("click", e => { e.preventDefault(); pick(list[i]); }); });
   }
   recent.hidden = S.recent.length === 0;
