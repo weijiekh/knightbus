@@ -16,6 +16,10 @@ MIGRATIONS: tuple[str, ...] = (
     "DROP INDEX IF EXISTS ix_vehicle_states_stop_id",
     # create_all won't add an index to an existing table.
     "CREATE INDEX IF NOT EXISTS ix_stops_lat_lon ON stops (lat, lon)",
+    # /etas filters trip updates by stop and recency; the (trip_id, stop_id, ...) index can't serve it.
+    "CREATE INDEX IF NOT EXISTS ix_trip_updates_stop_recent ON trip_update_states (stop_id, observed_at)",
+    # Redundant now: ix_trip_updates_stop_recent leads with stop_id.
+    "DROP INDEX IF EXISTS ix_trip_update_states_stop_id",
 )
 
 

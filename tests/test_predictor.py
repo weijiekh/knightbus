@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -273,3 +273,80 @@ def test_nearby_stops_filters_by_radius_and_sorts_by_distance() -> None:
 
     assert [r.stop_id for r in results] == ["near", "mid"]
     assert results[0].distance_m == 0.0
+
+
+def _seed_stop_with_trip(session: Session, stop_id: str, trip_id: str) -> None:
+    stop = Stop(stop_id=stop_id, name="Window Stop")
+    trip = Trip(trip_id=trip_id, route_id="route-w")
+    session.add_all([stop, trip])
+    session.flush()
+    session.add(
+        StopTime(
+            trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=1,
+            arrival_time="23:59:00", departure_time="23:59:00",
+            arrival_seconds=86340, departure_seconds=86340,
+        )
+    )
+
+
+def test_stale_trip_updates_are_ignored() -> None:
+    session = build_session()
+    _seed_stop_with_trip(session, "2001", "trip-stale")
+    session.add(
+        TripUpdateState(
+            trip_id="trip-stale", route_id="route-w", stop_id="2001",
+            arrival_time_unix=int(datetime.now(timezone.utc).timestamp()) + 600,
+            observed_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+    )
+    session.commit()
+
+    items = ETAPredictor().get_stop_etas(session, "2001")
+
+    assert items and items[0].prediction_source == "schedule"
+
+
+def test_service_ids_are_cached_between_requests() -> None:
+    session = build_session()
+    predictor = ETAPredictor()
+    now = datetime.now(timezone.utc)
+    calls = []
+    original = predictor._load_valid_service_ids
+    predictor._load_valid_service_ids = lambda *a: calls.append(1) or original(*a)  # type: ignore[method-assign]
+
+    predictor._valid_service_ids(session, now)
+    predictor._valid_service_ids(session, now)
+
+    assert len(calls) == 1
+
+
+def test_batch_stop_etas_returns_empty_items_for_stops_without_data(monkeypatch) -> None:  # noqa: ANN001
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+
+    from knightbus import main as main_module
+    from knightbus.db import get_db
+    from knightbus.schemas import EtaItem
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine)()
+    session.add(Stop(stop_id="1001", name="KL105 LRT MASJID JAMEK", lat=3.149, lon=101.696))
+    session.commit()
+    item = EtaItem(route_id="r", trip_id="t", stop_id="1001", prediction_source="schedule", data_timestamp=datetime.now(timezone.utc))
+    monkeypatch.setattr(
+        main_module.predictor, "get_stop_etas", lambda db, stop_id, route_id=None: [item] if stop_id == "1001" else []
+    )
+    main_module.app.dependency_overrides[get_db] = lambda: session
+    try:
+        client = TestClient(main_module.app)
+        body = client.get("/v1/stops/etas", params={"stop_ids": "1001,2002,1001"}).json()
+        assert [b["stop_id"] for b in body] == ["1001", "2002"]  # order kept, duplicates dropped
+        assert body[0]["stop_code"] == "KL105" and len(body[0]["items"]) == 1
+        assert body[1]["items"] == []
+        assert client.get("/v1/stops/etas", params={"stop_ids": ""}).status_code == 422
+        too_many = ",".join(str(i) for i in range(11))
+        assert client.get("/v1/stops/etas", params={"stop_ids": too_many}).status_code == 422
+        assert client.get("/v1/stops/9999/etas").status_code == 404
+    finally:
+        main_module.app.dependency_overrides.clear()

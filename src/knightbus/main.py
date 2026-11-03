@@ -32,6 +32,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Knightbus API", version="0.1.0", lifespan=lifespan)
 predictor = ETAPredictor()
+MAX_BATCH_STOPS = 10
 
 
 @app.get("/v1/health", response_model=HealthResponse)
@@ -62,15 +63,10 @@ def search(
     return search_stops_and_routes(db, q, lat=lat, lon=lon, limit=limit)
 
 
-@app.get("/v1/stops/{stop_id}/etas", response_model=StopEtaResponse)
-def stop_etas(
-    stop_id: str,
-    route_id: str | None = Query(default=None),
-    db: Session = Depends(get_db),
-) -> StopEtaResponse:
+def _stop_eta_response(db: Session, stop_id: str, route_id: str | None = None) -> StopEtaResponse | None:
     items = predictor.get_stop_etas(db, stop_id=stop_id, route_id=route_id)
     if not items:
-        raise HTTPException(status_code=404, detail=f"No ETA data found for stop {stop_id}")
+        return None
     stop = db.query(Stop).filter(Stop.stop_id == stop_id).first()
     code, name = split_stop_name(stop.name) if stop else (None, None)
     return StopEtaResponse(
@@ -82,6 +78,35 @@ def stop_etas(
         generated_at=datetime.now(timezone.utc),
         items=items,
     )
+
+
+@app.get("/v1/stops/etas", response_model=list[StopEtaResponse])
+def batch_stop_etas(
+    stop_ids: str = Query(..., description="Comma-separated stop ids (max 10)"),
+    db: Session = Depends(get_db),
+) -> list[StopEtaResponse]:
+    """ETAs for several stops in one request/DB session (nearby list). Stops without data
+    come back with empty `items` instead of failing the whole batch."""
+    ids = list(dict.fromkeys(i.strip() for i in stop_ids.split(",") if i.strip()))
+    if not ids or len(ids) > MAX_BATCH_STOPS:
+        raise HTTPException(status_code=422, detail=f"stop_ids must contain 1-{MAX_BATCH_STOPS} ids")
+    return [
+        _stop_eta_response(db, stop_id)
+        or StopEtaResponse(stop_id=stop_id, generated_at=datetime.now(timezone.utc), items=[])
+        for stop_id in ids
+    ]
+
+
+@app.get("/v1/stops/{stop_id}/etas", response_model=StopEtaResponse)
+def stop_etas(
+    stop_id: str,
+    route_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> StopEtaResponse:
+    response = _stop_eta_response(db, stop_id, route_id)
+    if response is None:
+        raise HTTPException(status_code=404, detail=f"No ETA data found for stop {stop_id}")
+    return response
 
 
 @app.get("/v1/trips/{trip_id}/stops", response_model=TripStopsResponse)

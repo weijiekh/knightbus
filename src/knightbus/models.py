@@ -153,6 +153,8 @@ class TripUpdateState(Base):
     __tablename__ = "trip_update_states"
     __table_args__ = (
         Index("ix_trip_updates_lookup", "trip_id", "stop_id", "observed_at"),
+        # Stop ETA lookup: newest updates for one stop (also covers plain stop_id filters).
+        Index("ix_trip_updates_stop_recent", "stop_id", "observed_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -160,7 +162,7 @@ class TripUpdateState(Base):
     trip_id: Mapped[str] = mapped_column(String(128), index=True)
     route_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     vehicle_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
-    stop_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    stop_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     stop_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     arrival_time_unix: Mapped[int | None] = mapped_column(Integer, nullable=True)
     departure_time_unix: Mapped[int | None] = mapped_column(Integer, nullable=True)
