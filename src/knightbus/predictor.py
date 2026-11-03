@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 UPCOMING_GRACE_SECONDS = 120
 VEHICLE_MAX_AGE_SECONDS = 15 * 60
+# Trip updates are re-reported every poll; older rows are stale predictions. Bounding the
+# lookup keeps it off the 14 days of history kept for training.
+TRIP_UPDATE_MAX_AGE_SECONDS = 30 * 60
 
 
 class ETAPredictor:
@@ -80,7 +83,7 @@ class ETAPredictor:
         ).all()
         if not schedule_rows:
             schedule_rows = db.execute(query.limit(25)).all()
-        latest_updates = self._latest_trip_updates(db, stop_id)
+        latest_updates = self._latest_trip_updates(db, stop_id, now)
         latest_vehicles = self._latest_vehicles(db, [trip.trip_id for _, trip, _ in schedule_rows], now)
         trip_schedule_seconds = self._trip_schedule_seconds(db, [trip.id for _, trip, _ in schedule_rows])
 
@@ -176,7 +179,6 @@ class ETAPredictor:
         local_now = now.astimezone(self._service_tz)
         today_str = local_now.strftime("%Y%m%d")
         day_col = local_now.strftime("%A").lower()  # e.g. "monday"
-
         # Check if any calendar data exists
         has_calendar = db.execute(select(ServiceCalendar).limit(1)).scalars().first()
         if has_calendar is None:
@@ -240,11 +242,14 @@ class ETAPredictor:
         return ModelInfoResponse(version=version.version, status=version.status, metrics_json=version.metrics_json)
 
     @staticmethod
-    def _latest_trip_updates(db: Session, stop_id: str) -> dict[str, TripUpdateState]:
+    def _latest_trip_updates(db: Session, stop_id: str, now: datetime) -> dict[str, TripUpdateState]:
         rows = (
             db.execute(
                 select(TripUpdateState)
-                .where(TripUpdateState.stop_id == stop_id)
+                .where(
+                    TripUpdateState.stop_id == stop_id,
+                    TripUpdateState.observed_at >= now - timedelta(seconds=TRIP_UPDATE_MAX_AGE_SECONDS),
+                )
                 .order_by(desc(TripUpdateState.observed_at))
                 .limit(200)
             )

@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -273,3 +273,34 @@ def test_nearby_stops_filters_by_radius_and_sorts_by_distance() -> None:
 
     assert [r.stop_id for r in results] == ["near", "mid"]
     assert results[0].distance_m == 0.0
+
+
+def _seed_stop_with_trip(session: Session, stop_id: str, trip_id: str) -> None:
+    stop = Stop(stop_id=stop_id, name="Window Stop")
+    trip = Trip(trip_id=trip_id, route_id="route-w")
+    session.add_all([stop, trip])
+    session.flush()
+    session.add(
+        StopTime(
+            trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=1,
+            arrival_time="23:59:00", departure_time="23:59:00",
+            arrival_seconds=86340, departure_seconds=86340,
+        )
+    )
+
+
+def test_stale_trip_updates_are_ignored() -> None:
+    session = build_session()
+    _seed_stop_with_trip(session, "2001", "trip-stale")
+    session.add(
+        TripUpdateState(
+            trip_id="trip-stale", route_id="route-w", stop_id="2001",
+            arrival_time_unix=int(datetime.now(timezone.utc).timestamp()) + 600,
+            observed_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+    )
+    session.commit()
+
+    items = ETAPredictor().get_stop_etas(session, "2001")
+
+    assert items and items[0].prediction_source == "schedule"

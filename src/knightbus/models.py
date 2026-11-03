@@ -153,6 +153,8 @@ class TripUpdateState(Base):
     __tablename__ = "trip_update_states"
     __table_args__ = (
         Index("ix_trip_updates_lookup", "trip_id", "stop_id", "observed_at"),
+        # Stop ETA lookup: newest updates for one stop.
+        Index("ix_trip_updates_stop_recent", "stop_id", "observed_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
