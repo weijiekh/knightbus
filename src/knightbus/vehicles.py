@@ -1,4 +1,6 @@
-from sqlalchemy import and_, select
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from knightbus.models import Stop, Trip, VehicleState
@@ -7,8 +9,22 @@ from knightbus.schemas import VehicleResponse
 
 def route_vehicles(db: Session, route_id: str) -> list[VehicleResponse]:
     """Enrich positions with static metadata without crossing feed boundaries."""
+    # VehicleState is an append-only history. Rank before filtering by route so a
+    # bus that has switched routes cannot keep appearing on its previous route.
+    latest = (
+        select(
+            VehicleState.id,
+            func.row_number().over(
+                partition_by=(VehicleState.feed_name, VehicleState.vehicle_id),
+                order_by=(VehicleState.observed_at.desc(), VehicleState.id.desc()),
+            ).label("position_rank"),
+        )
+        .where(VehicleState.observed_at >= datetime.now(timezone.utc) - timedelta(minutes=30))
+        .subquery()
+    )
     rows = db.execute(
         select(VehicleState, Trip.headsign, Trip.direction_id, Stop.name)
+        .join(latest, and_(latest.c.id == VehicleState.id, latest.c.position_rank == 1))
         .outerjoin(Trip, and_(Trip.feed_name == VehicleState.feed_name, Trip.trip_id == VehicleState.trip_id))
         .outerjoin(Stop, and_(Stop.feed_name == VehicleState.feed_name, Stop.stop_id == VehicleState.stop_id))
         .where(VehicleState.route_id == route_id)

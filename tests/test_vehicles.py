@@ -29,3 +29,24 @@ def test_route_metadata_stays_with_its_feed_and_missing_static_is_preserved():
         assert buses["two"].headsign is None
         assert buses["two"].stop_name is None
         assert route_vehicles(db, "unknown") == []
+
+
+def test_route_returns_only_latest_recent_position_and_excludes_switched_buses():
+    from datetime import timedelta
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        db.add_all([
+            VehicleState(feed_name="a", vehicle_id="bus", route_id="r", lat=1, observed_at=now - timedelta(minutes=2)),
+            VehicleState(feed_name="a", vehicle_id="bus", route_id="r", lat=2, observed_at=now),
+            VehicleState(feed_name="a", vehicle_id="switched", route_id="r", observed_at=now - timedelta(minutes=1)),
+            VehicleState(feed_name="a", vehicle_id="switched", route_id="other", observed_at=now),
+            VehicleState(feed_name="a", vehicle_id="old", route_id="r", observed_at=now - timedelta(hours=1)),
+            VehicleState(feed_name="b", vehicle_id="bus", route_id="r", lat=3, observed_at=now),
+        ])
+        db.commit()
+        buses = route_vehicles(db, "r")
+        assert len(buses) == 2
+        assert sorted(v.lat for v in buses) == [2, 3]
