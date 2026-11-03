@@ -318,3 +318,35 @@ def test_service_ids_are_cached_between_requests() -> None:
     predictor._valid_service_ids(session, now)
 
     assert len(calls) == 1
+
+
+def test_batch_stop_etas_returns_empty_items_for_stops_without_data(monkeypatch) -> None:  # noqa: ANN001
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+
+    from knightbus import main as main_module
+    from knightbus.db import get_db
+    from knightbus.schemas import EtaItem
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine)()
+    session.add(Stop(stop_id="1001", name="KL105 LRT MASJID JAMEK", lat=3.149, lon=101.696))
+    session.commit()
+    item = EtaItem(route_id="r", trip_id="t", stop_id="1001", prediction_source="schedule", data_timestamp=datetime.now(timezone.utc))
+    monkeypatch.setattr(
+        main_module.predictor, "get_stop_etas", lambda db, stop_id, route_id=None: [item] if stop_id == "1001" else []
+    )
+    main_module.app.dependency_overrides[get_db] = lambda: session
+    try:
+        client = TestClient(main_module.app)
+        body = client.get("/v1/stops/etas", params={"stop_ids": "1001,2002,1001"}).json()
+        assert [b["stop_id"] for b in body] == ["1001", "2002"]  # order kept, duplicates dropped
+        assert body[0]["stop_code"] == "KL105" and len(body[0]["items"]) == 1
+        assert body[1]["items"] == []
+        assert client.get("/v1/stops/etas", params={"stop_ids": ""}).status_code == 422
+        too_many = ",".join(str(i) for i in range(11))
+        assert client.get("/v1/stops/etas", params={"stop_ids": too_many}).status_code == 422
+        assert client.get("/v1/stops/9999/etas").status_code == 404
+    finally:
+        main_module.app.dependency_overrides.clear()
