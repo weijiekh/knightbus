@@ -232,7 +232,7 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .saved-item.dragging .drag-handle { cursor: grabbing; }
 /* Drag handles only show in reorder mode (toggled by the Reorder button) */
 .drag-handle { display: none; }
-.trip-link { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; min-height: 36px; display: inline-flex; align-items: center; }
+.trip-link { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; min-height: 36px; display: inline-flex; align-items: center; }
 .trip-now { margin-bottom: 4px; }
 .trip-nav { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .trip-nav a, .trip-nav span { flex: 1; min-width: 0; margin-top: 0; text-decoration: none; justify-content: center; }
@@ -247,6 +247,37 @@ mark { background: var(--accent-hl); color: inherit; border-radius: 4px; padding
 .reorder-btn { min-height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface); color: var(--text); font-weight: 600; font-size: 13px; flex-shrink: 0; }
 .reorder-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .reorder-btn[hidden] { display: none; }
+
+/* ── FIRST-TIMER GUIDANCE ── */
+.loc-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 10px; border-radius: 14px; border: 1px solid var(--border-live); background: var(--accent-dim); color: var(--accent); font-weight: 600; font-size: 14px; }
+.loc-btn.busy svg { animation: pulse 1s ease-in-out infinite; }
+.hint { padding: 0 20px 6px; font-size: 13px; color: var(--text2); line-height: 1.45; }
+.intro { margin: 4px 20px 6px; padding: 16px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border-live); position: relative; }
+.intro h2 { font-size: 16px; margin-bottom: 10px; padding-right: 40px; }
+.intro ol { list-style: none; display: flex; flex-direction: column; gap: 10px; counter-reset: s; }
+.intro li { counter-increment: s; display: flex; gap: 10px; font-size: 14px; line-height: 1.4; }
+.intro li::before { content: counter(s); flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font: 700 12px 'IBM Plex Mono', monospace; display: grid; place-items: center; }
+.intro .x { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; border: 0; background: transparent; color: var(--text2); display: grid; place-items: center; }
+.intro .btn { width: 100%; margin-top: 14px; }
+.tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; background: var(--accent-dim); color: var(--accent); font-size: 11px; font-weight: 700; vertical-align: 1px; }
+.key { margin: 10px 20px 0; font-size: 12px; color: var(--text2); line-height: 1.45; }
+a.route-badge { text-decoration: none; }
+.stop-section { padding: 16px 20px 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text2); }
+.trip-hero { text-align: left; }
+.trip-hero .label { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text2); }
+.trip-hero .next-name { font-size: 24px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; }
+.trip-hero .now-line { font-size: 13px; color: var(--text2); }
+.progress { height: 6px; border-radius: 3px; background: var(--surface2); overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); border-radius: 3px; }
+.trip-nav .btn { min-height: 52px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; }
+.trip-row.last .badge { background: var(--late-dim); color: var(--late); }
+.route-map-card { margin: 0 20px 4px; height: 220px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg2); position: relative; overflow: hidden; }
+#route-map { position: absolute; inset: 0; }
+[data-theme="dark"] #route-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
+.bus-pin { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; border: 2px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
+.bus-row { display: flex; flex-direction: column; gap: 10px; }
+.bus-row .links { display: flex; gap: 8px; flex-wrap: wrap; }
+.bus-row .links a { min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-weight: 600; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -310,6 +341,7 @@ const I = {
   star: (on) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="m12 17.3-5.4 3 1-6.1L3.2 9.9l6.1-.9L12 3.5l2.7 5.5 6.1.9-4.4 4.3 1 6.1z"/></svg>`,
   refresh: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>',
   x: '<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></span>',
+  help: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01"/></svg>',
   info: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>',
   stop: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3h8v12H8z"/><path d="M12 15v6"/></svg>',
   place: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>',
@@ -337,6 +369,7 @@ const S = {
   lastOkAt: 0,
   offline: false,
   lastLoadAt: 0,
+  introSeen: load("kb-intro-seen", false),
   homeMode: load("kb-home-mode", "list"), // "list" | "map" (map fills the page)
   mapExpanded: false,     // list-mode map preview: 150px or expanded
   view: null,
@@ -517,7 +550,7 @@ function getLocation() {
 }
 async function useGPS() {
   S.locError = null;
-  $(".gps")?.classList.add("busy");
+  document.querySelectorAll(".loc-btn").forEach(b => b.classList.add("busy"));
   if (S.view === "home" && !S.nearby) renderHomeBody({ loading: true });
   try {
     const pos = await getLocation();
@@ -529,7 +562,7 @@ async function useGPS() {
       : isTimeout ? "Location request timed out. Try again."
       : "Location unavailable. Try again or search manually.";
   }
-  $(".gps")?.classList.remove("busy");
+  document.querySelectorAll(".loc-btn").forEach(b => b.classList.remove("busy"));
   S.nearby = null;
   if (S.view === "home") loadNearby(); else location.hash = "#/";
 }
@@ -588,16 +621,20 @@ function renderHome() {
   view.innerHTML = `
     <header class="top">
       <a class="brand" href="#/">${I.logo}<span>mana<em>Bas</em></span></a>
-      <button type="button" class="icon-btn" aria-label="Toggle light or dark theme" onclick="toggleTheme()">${I.themeBtn}</button>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="icon-btn" id="help-btn" aria-label="How it works" aria-expanded="${!S.introSeen}" onclick="toggleIntro()">${I.help}</button>
+        <button type="button" class="icon-btn" aria-label="Toggle light or dark theme" onclick="toggleTheme()">${I.themeBtn}</button>
+      </div>
     </header>
     <div class="search-row">
       <label for="q" class="sr-only">Search stops, routes or places</label>
       <div class="field">
         ${I.search}
-        <input id="q" type="search" placeholder="Stop, route no. or place" autocomplete="off" spellcheck="false">
-        <button type="button" class="gps" aria-label="Use my location" onclick="useGPS()">${I.gps}</button>
+        <input id="q" type="search" placeholder="Search stop, route no. or place" autocomplete="off" spellcheck="false">
       </div>
+      <button type="button" class="loc-btn" onclick="useGPS()">${I.gps}<span>Use my current location</span></button>
     </div>
+    <div id="intro-slot">${S.introSeen ? "" : introCard()}</div>
     <div class="view-toggle" role="group" aria-label="Nearby view">
       <button type="button" data-hv="list">List</button>
       <button type="button" data-hv="map">Map</button>
@@ -621,6 +658,29 @@ function renderHome() {
   else useGPS();
   setHomeMode(S.homeMode);
 }
+function introCard() {
+  return `<section class="intro" id="intro" aria-label="How it works">
+    <h2>Catch your bus in 3 steps</h2>
+    <button type="button" class="x" aria-label="Dismiss tips" onclick="dismissIntro()">${I.x}</button>
+    <ol>
+      <li><span><strong>Find your stop.</strong> We show stops near you, or search a stop, route number or place.</span></li>
+      <li><span><strong>Tap the stop</strong> to see live arrival times. <span style="color:var(--accent);font-weight:700">Green LIVE</span> = tracked by GPS, <em>Scheduled</em> = timetable only.</span></li>
+      <li><span><strong>On the bus?</strong> Tap “Follow this bus” to see which stop is next and when to get off.</span></li>
+    </ol>
+    <button type="button" class="btn" onclick="dismissIntro()">Got it</button>
+  </section>`;
+}
+function setIntro(show) {
+  S.introSeen = !show;
+  save("kb-intro-seen", S.introSeen);
+  const slot = $("#intro-slot");
+  if (slot) slot.innerHTML = show ? introCard() : "";
+  $("#help-btn")?.setAttribute("aria-expanded", String(show));
+  if (show) $("#intro")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  fitFillCards(); // map-view height depends on what sits above it
+}
+function dismissIntro() { setIntro(false); }
+function toggleIntro() { setIntro(S.introSeen); }
 // Nearby: "list" = stop cards with a small map preview; "map" = map fills the rest of the page.
 function setHomeMode(mode) {
   S.homeMode = mode === "map" ? "map" : "list";
@@ -665,7 +725,7 @@ function renderHomeBody(opts = {}) {
   }
   if (S.locError && !S.loc) {
     body.innerHTML = `<div class="panel dashed">${I.place.replace('width="18" height="18"', 'width="28" height="28"')}
-      <div class="ptitle">Location error</div><div class="psub">${esc(S.locError)}</div>
+      <div class="ptitle">Can't find your location</div><div class="psub">${esc(S.locError)}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button type="button" class="btn out" onclick="useGPS()">Try again</button>
       <a class="btn" href="#/search" style="display:inline-flex;align-items:center;text-decoration:none">Search instead</a></div></div>`;
     return;
@@ -676,15 +736,16 @@ function renderHomeBody(opts = {}) {
     return;
   }
   const label = S.loc?.label || "";
-  const head = `<div class="sec-head"><h2>Nearby stops</h2><span class="meta">${esc(label)}${label ? " · " : ""}updated <span data-ago="${S.nearbyAt}">${ago(S.nearbyAt)}</span></span></div>`;
+  const head = `<div class="sec-head"><h2>Bus stops near ${S.loc?.gps ? "you" : "here"}</h2><span class="meta">${esc(label)}${label ? " · " : ""}updated <span data-ago="${S.nearbyAt}">${ago(S.nearbyAt)}</span></span></div>`;
   if (S.nearby.length === 0) {
     body.innerHTML = head + `<div class="panel dashed">${I.empty}
       <div class="ptitle">No stops within 1 km</div>
-      <div class="psub">Try a stop name, a route number like <span class="mono">190</span>, or a place.</div>
+      <div class="psub">Try searching a stop name, a route number like <span class="mono">190</span>, or a place such as a mall or station.</div>
       <a class="btn" href="#/search" style="display:inline-flex;align-items:center;text-decoration:none">Search instead</a></div>`;
     return;
   }
-  body.innerHTML = head + `<div class="list">${S.nearby.map((n, i) => nearbyCard(n, i)).join("")}</div>`;
+  body.innerHTML = head + `<p class="hint">Tap a stop for all buses and live times. Closest stop is first.</p><div class="list">${S.nearby.map((n, i) => nearbyCard(n, i)).join("")}</div>
+    <p class="key">Each box = bus route number and minutes until its next bus. Green means 5 min or less.</p>`;
 }
 function nearbyCard({ stop, eta }, i) {
   const { code, name } = splitStopName(stop.name);
@@ -698,7 +759,7 @@ function nearbyCard({ stop, eta }, i) {
   return `<a class="stop-card${i === 0 ? " first" : ""}" href="#/stop/${encodeURIComponent(stop.stop_id)}">
     <div class="stop-row">
       <span class="num${i === 0 ? " first" : ""}" aria-hidden="true">${i + 1}</span>
-      <div class="grow"><div class="title">${esc(name)}</div><div class="sub">${esc(code || stop.stop_id)}${esc(dist)}</div></div>
+      <div class="grow"><div class="title">${esc(name)}${i === 0 ? '<span class="tag">Closest</span>' : ""}</div><div class="sub">${esc(code || stop.stop_id)}${esc(dist)}</div></div>
       ${I.chev}
     </div><div class="card-foot">${bottom}</div></a>`;
 }
@@ -735,7 +796,7 @@ let map = null;
 function mapOptions() {
   return { zoomControl: true, attributionControl: true, scrollWheelZoom: matchMedia("(pointer: fine)").matches };
 }
-function destroyMap() { if (map) { map.remove(); map = null; } destroyStopMap(); }
+function destroyMap() { if (map) { map.remove(); map = null; } destroyStopMap(); destroyRouteMap(); }
 function whenLeaflet(cb) {
   if (window.L) return cb();
   const s = document.querySelector('script[src*="leaflet"]');
@@ -917,12 +978,17 @@ function renderStopBody() {
   const LIMIT = 4;
   const shown = stopState.showAll ? groups : groups.slice(0, LIMIT);
   const hidden = groups.length - shown.length;
-  body.innerHTML = `<div class="list">${shown.map(arrivalCard).join("")}
+  body.innerHTML = `<div class="stop-section">Next buses · tap a route number to see it live</div><div class="list">${shown.map(arrivalCard).join("")}
     ${hidden > 0 ? `<button type="button" class="more" onclick="stopState.showAll=true;renderStopBody()">Show ${hidden} more route${hidden === 1 ? "" : "s"}</button>` : ""}
   </div>` + legend();
 }
 function legend() {
   return `<div class="legend">${I.info}<span>LIVE = GPS from the bus. SCHEDULED = timetable only; may change.</span></div>`;
+}
+function routeBadgeLink(it) {
+  if (!it.route_id) return `<span class="route-badge">${esc(routeLabel(it))}</span>`;
+  S.routeMeta[it.route_id] = S.routeMeta[it.route_id] || { route_id: it.route_id, short_name: routeLabel(it), long_name: it.route_long_name };
+  return `<a class="route-badge" href="#/route/${encodeURIComponent(it.route_id)}" aria-label="Route ${esc(routeLabel(it))}: see live buses">${esc(routeLabel(it))}</a>`;
 }
 function arrivalCard(group) {
   const first = group[0];
@@ -943,7 +1009,7 @@ function arrivalCard(group) {
   }
   return `<div class="arr${live ? " live" : ""}">
     <div class="arr-top">
-      <span class="route-badge">${esc(routeLabel(first))}</span>
+      ${routeBadgeLink(first)}
       <div class="grow"><div class="dest">${esc(dest)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>
       <div class="big ${live ? "live" : "sched"}">${big}</div>
     </div>
@@ -951,7 +1017,7 @@ function arrivalCard(group) {
       ${live ? '<span class="badge live">LIVE</span>' : '<span class="badge sched">SCHEDULED</span>'}
       ${live ? delayBadge(first) : ""}
       ${then ? `<span class="then">${esc(then)}</span>` : (live ? "" : '<span class="sub">no live bus yet</span>')}
-      ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}">Ride · next stops →</a>` : ""}
+      ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}">Follow this bus →</a>` : ""}
     </div>
   </div>`;
 }
@@ -1131,28 +1197,33 @@ function renderTripBody(stopId) {
   const stops = data.stops;
   const idx = Math.max(0, stops.findIndex(s => s.stop_id === stopId));
   const cur = stops[idx], prev = stops[idx - 1], next = stops[idx + 1];
+  const left = stops.length - 1 - idx;
   const route = data.route_short_name || "";
   const dest = data.headsign ? `to ${titleCase(data.headsign)}` : "";
   $("#trip-code").textContent = [route && `Route ${route}`, dest].filter(Boolean).join(" · ") || "Trip";
-  $("#trip-title").textContent = `${stops.length} stops on this trip`;
+  $("#trip-title").textContent = "Follow this bus";
+  const nm = s => titleCase(s.stop_name || s.stop_id);
   body.innerHTML = `
-    <div class="panel trip-now">
-      <div class="psub">You are at stop ${idx + 1} of ${stops.length}</div>
-      <div class="ptitle">${esc(cur.stop_name || cur.stop_id)}</div>
-      ${cur.stop_code ? `<div class="psub mono">${esc(cur.stop_code)}</div>` : ""}
-      ${next ? `<div class="psub">Next: ${esc(next.stop_name || next.stop_id)}</div>` : `<div class="psub">Last stop on this trip</div>`}
+    <div class="panel trip-now trip-hero">
+      <div class="label">${next ? "Next stop" : "Final stop"}</div>
+      <div class="next-name">${esc(next ? nm(next) : nm(cur))}</div>
+      <div class="now-line">${next ? `${left} stop${left === 1 ? "" : "s"} to go · you are at ${esc(nm(cur))}` : "This is where the bus ends. Time to get off."}</div>
+      <div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${stops.length}" aria-valuenow="${idx + 1}" aria-label="Trip progress"><div style="width:${Math.round((idx + 1) / stops.length * 100)}%"></div></div>
       <div class="trip-nav">
-        ${prev ? `<a class="btn out" href="${tripStepHref(data.trip_id, prev)}">← Previous</a>` : `<span class="btn out" aria-disabled="true">← Previous</span>`}
-        ${next ? `<a class="btn" href="${tripStepHref(data.trip_id, next)}">Next stop →</a>` : `<span class="btn" aria-disabled="true">Next stop →</span>`}
+        ${prev ? `<a class="btn out" href="${tripStepHref(data.trip_id, prev)}">‹ Back one stop</a>` : `<span class="btn out" aria-disabled="true">‹ Back one stop</span>`}
+        ${next ? `<a class="btn" href="${tripStepHref(data.trip_id, next)}">Bus moved on ›</a>` : `<span class="btn" aria-disabled="true">Bus moved on ›</span>`}
       </div>
+      <div class="psub">Tap “Bus moved on” each time the bus leaves a stop, so you always know how far to go.</div>
     </div>
+    <div class="stop-section">All stops on this trip · tap one to jump there</div>
     <div class="list trip-list">${stops.map((s, i) => `
-      <a class="row-card trip-row${i === idx ? " current" : ""}${i < idx ? " done" : ""}" href="${tripStepHref(data.trip_id, s)}"${i === idx ? ' aria-current="step"' : ""}>
+      <a class="row-card trip-row${i === idx ? " current" : ""}${i < idx ? " done" : ""}${i === stops.length - 1 ? " last" : ""}" href="${tripStepHref(data.trip_id, s)}"${i === idx ? ' aria-current="step"' : ""}>
         <span class="num${i === idx ? " first" : ""}" aria-hidden="true">${i + 1}</span>
-        <div class="grow"><div class="title">${esc(s.stop_name || s.stop_id)}</div><div class="sub mono">${esc(s.stop_code || s.stop_id)}</div></div>
-        ${i === idx ? '<span class="badge live">HERE</span>' : ""}
+        <div class="grow"><div class="title">${esc(nm(s))}</div><div class="sub mono">${esc(s.stop_code || s.stop_id)}</div></div>
+        ${i === idx ? '<span class="badge live">YOU ARE HERE</span>' : i === stops.length - 1 ? '<span class="badge">LAST STOP</span>' : i < idx ? '<span class="sub">passed</span>' : ""}
       </a>`).join("")}
     </div>`;
+  document.querySelector(".trip-row.current")?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 // ══════════ SAVED ══════════
@@ -1367,20 +1438,26 @@ view.addEventListener("keydown", e => {
 // ══════════ ROUTES ══════════
 function renderRoutes() {
   const routes = S.recent.filter(r => r.kind === "route");
-  view.innerHTML = `<h1 class="page-title">Routes</h1><p class="page-sub">See where a route's buses are right now.</p>
-    <div class="search-row"><a class="field" href="#/search" style="text-decoration:none;color:var(--text2)">${I.search}<span>Search a route number, e.g. <span class="mono">190</span></span></a></div>
+  view.innerHTML = `<h1 class="page-title">Routes</h1><p class="page-sub">Pick a bus route to see where its buses are right now.</p>
+    <div class="search-row"><a class="field" href="#/search" style="text-decoration:none;color:var(--text2)">${I.search}<span>Search route number, e.g. <span class="mono">190</span></span></a></div>
     ${routes.length ? `<div class="sec-head"><h2>Recently viewed</h2></div><div class="list">${routes.map(r => `<a class="row-card" href="#/route/${encodeURIComponent(r.id)}">
-      <span class="route-badge sm">${esc(r.label)}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")))}</div></div>${I.chev}</a>`).join("")}</div>` : ""}`;
+      <span class="route-badge sm">${esc(r.label)}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")))}</div></div>${I.chev}</a>`).join("")}</div>`
+    : `<div class="panel dashed">${I.busLine}<div class="ptitle">No routes yet</div>
+      <div class="psub">Search for a route number above, or open a stop and tap a route number to see its live buses on a map.</div></div>`}`;
 }
 const routeState = { id: null, vehicles: null, at: 0 };
+let routeMap = null;
+function destroyRouteMap() { if (routeMap) { routeMap.remove(); routeMap = null; routeMarkers = null; } }
 function renderRoute({ id }) {
   const meta = S.routeMeta[id] || {};
   if (routeState.id !== id) { routeState.id = id; routeState.vehicles = null; }
+  const label = meta.short_name || id;
+  const long = meta.long_name ? titleCase(meta.long_name.replace(/\s*~\s*/g, " ↔ ")) : "";
   view.innerHTML = `
     <div class="bar"><button type="button" class="icon-btn ghost" aria-label="Back" onclick="goBack()">${I.back}</button><div style="flex:1"></div>
       <button type="button" class="icon-btn ghost" aria-label="Refresh vehicles" onclick="refreshView(true)">${I.refresh}</button></div>
-    <div class="stop-head"><div class="code">Route ${esc(meta.short_name || id)}</div>
-      <h1>${esc(meta.long_name ? titleCase(meta.long_name.replace(/\s*~\s*/g, " ↔ ")) : `Route ${meta.short_name || id}`)}</h1>
+    <div class="stop-head"><div class="code">Live buses on route</div>
+      <h1><span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(label)}</span>${esc(long)}</h1>
       <div class="fresh" id="route-fresh"></div></div>
     <div id="route-body"></div>`;
   if (routeState.vehicles) drawRoute(); else loadRoute(id);
@@ -1395,20 +1472,58 @@ async function loadRoute(id) {
   } catch { /* keep last data */ }
   if (S.view === "route" && currentRoute.id === id) drawRoute();
 }
+let routeMarkers = null;
+// Map is created once per route visit; refreshes only swap the markers so the user's pan/zoom survives.
+function drawRouteMap(v) {
+  whenLeaflet(() => {
+    const el = $("#route-map");
+    if (!el || !window.L) return;
+    const card = el.closest(".route-map-card");
+    const pts = v.filter(x => x.lat != null && x.lon != null);
+    card.hidden = !pts.length;
+    if (!pts.length) return;
+    const fresh = !routeMap;
+    if (fresh) {
+      routeMap = L.map("route-map", mapOptions());
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(routeMap);
+      routeMarkers = L.layerGroup().addTo(routeMap);
+    } else {
+      routeMarkers.clearLayers();
+      routeMap.invalidateSize();
+    }
+    const ll = [];
+    const busSvg = I.busLine.replace('width="28" height="28"', 'width="16" height="16"').replace('stroke="var(--accent)"', 'stroke="currentColor"');
+    for (const x of pts) {
+      ll.push([x.lat, x.lon]);
+      L.marker([x.lat, x.lon], { icon: L.divIcon({ className: "", html: `<div class="bus-pin">${busSvg}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }), title: `Bus ${x.vehicle_id}`, alt: `Bus ${x.vehicle_id}` }).addTo(routeMarkers);
+    }
+    if (S.loc) { ll.push([S.loc.lat, S.loc.lon]); L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false }).addTo(routeMarkers); }
+    if (fresh) routeMap.fitBounds(ll, { padding: [30, 30], maxZoom: 16 });
+  });
+}
 function drawRoute() {
   const body = $("#route-body");
   if (!body) return;
   const v = routeState.vehicles;
-  if (!v) { body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load vehicles</div><button type="button" class="btn" onclick="refreshView(true)">Retry</button></div>`; return; }
-  $("#route-fresh").innerHTML = `<span class="dot${v.length ? " live" : ""}"></span><span>${v.length} bus${v.length === 1 ? "" : "es"} live · updated <span data-ago="${routeState.at}">${ago(routeState.at)}</span></span>`;
-  if (!v.length) { body.innerHTML = `<div class="panel dashed">${I.empty}<div class="ptitle">No live buses on this route</div><div class="psub">Buses may not be running right now, or aren't reporting GPS.</div></div>`; return; }
-  body.innerHTML = `<div class="list">${v.map(x => {
+  if (!v) { destroyRouteMap(); body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load buses</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="refreshView(true)">Retry</button></div>`; return; }
+  $("#route-fresh").innerHTML = `<span class="dot${v.length ? " live" : ""}"></span><span>${v.length} bus${v.length === 1 ? "" : "es"} running now · updated <span data-ago="${routeState.at}">${ago(routeState.at)}</span></span>`;
+  if (!v.length) { destroyRouteMap(); body.innerHTML = `<div class="panel dashed">${I.empty}<div class="ptitle">No live buses on this route</div><div class="psub">Buses may not be running right now, or aren't sending GPS. Check a stop's timetable for scheduled times.</div><a class="btn out" href="#/">Back to nearby stops</a></div>`; return; }
+  if (!$("#route-list")) { // first draw (or coming back from an empty/error state): build the shell once
+    destroyRouteMap();
+    body.innerHTML = `<div class="route-map-card"><div id="route-map" role="region" aria-label="Map of live buses on this route"></div></div>
+      <div class="stop-section">Buses on this route</div><div class="list" id="route-list"></div>`;
+  }
+  const busIcon = I.busLine.replace('width="28" height="28"', 'width="18" height="18"').replace('stroke="var(--accent)"', 'stroke="currentColor"');
+  $("#route-list").innerHTML = v.map(x => {
     const seen = Date.parse(x.observed_at);
     const stop = x.stop_id ? stopDisplay(x.stop_id) : null;
-    return `<div class="row-card"><span class="res-ico">${I.busLine.replace('width="28" height="28"', 'width="18" height="18"').replace('stroke="var(--accent)"', 'stroke="currentColor"')}</span>
-      <div class="grow"><div class="title mono">${esc(x.vehicle_id)}</div>
-      <div class="sub">Seen <span data-ago="${seen}">${ago(seen)}</span>${stop ? ` · near <a href="#/stop/${encodeURIComponent(x.stop_id)}">${esc(stop.name)}</a>` : ""}</div></div></div>`;
-  }).join("")}</div>`;
+    const follow = x.trip_id && x.stop_id ? `<a href="#/trip/${encodeURIComponent(x.trip_id)}/${encodeURIComponent(x.stop_id)}">Follow this bus →</a>` : "";
+    return `<div class="row-card bus-row"><div style="display:flex;align-items:center;gap:12px"><span class="res-ico">${busIcon}</span>
+      <div class="grow"><div class="title">${stop ? `Near ${esc(stop.name)}` : `Bus ${esc(x.vehicle_id)}`}</div>
+      <div class="sub">Bus <span class="mono">${esc(x.vehicle_id)}</span> · seen <span data-ago="${seen}">${ago(seen)}</span></div></div></div>
+      ${stop || follow ? `<div class="links">${stop ? `<a href="#/stop/${encodeURIComponent(x.stop_id)}">Arrivals at this stop</a>` : ""}${follow}</div>` : ""}</div>`;
+  }).join("");
+  drawRouteMap(v);
 }
 
 // ══════════ BOOT ══════════
