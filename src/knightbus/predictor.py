@@ -2,6 +2,7 @@ import logging
 from math import cos, radians
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 
 from sqlalchemy import Select, desc, select
 from sqlalchemy.orm import Session
@@ -21,6 +22,8 @@ VEHICLE_MAX_AGE_SECONDS = 15 * 60
 # Trip updates are re-reported every poll; older rows are stale predictions. Bounding the
 # lookup keeps it off the 14 days of history kept for training.
 TRIP_UPDATE_MAX_AGE_SECONDS = 30 * 60
+# Calendar rows only change on a static GTFS reload (daily), so per-request lookups are wasteful.
+SERVICE_IDS_TTL_SECONDS = 10 * 60
 
 
 class ETAPredictor:
@@ -30,6 +33,7 @@ class ETAPredictor:
         self._model_mtime: float | None = None
         self._ml_model: ResidualModel | None = None
         self._service_tz = settings.gtfs_service_tzinfo
+        self._service_ids_cache: tuple[str, float, set[str] | None] | None = None
         self.current_model()
 
     def current_model(self) -> ResidualModel | None:
@@ -85,7 +89,10 @@ class ETAPredictor:
             schedule_rows = db.execute(query.limit(25)).all()
         latest_updates = self._latest_trip_updates(db, stop_id, now)
         latest_vehicles = self._latest_vehicles(db, [trip.trip_id for _, trip, _ in schedule_rows], now)
-        trip_schedule_seconds = self._trip_schedule_seconds(db, [trip.id for _, trip, _ in schedule_rows])
+        # Only trips with a live bus use their full schedule (delay from progress).
+        trip_schedule_seconds = self._trip_schedule_seconds(
+            db, [trip.id for _, trip, _ in schedule_rows if trip.trip_id in latest_vehicles]
+        )
 
         items: list[EtaItem] = []
         for stop_time, trip, route in schedule_rows:
@@ -179,6 +186,16 @@ class ETAPredictor:
         local_now = now.astimezone(self._service_tz)
         today_str = local_now.strftime("%Y%m%d")
         day_col = local_now.strftime("%A").lower()  # e.g. "monday"
+
+        cached = self._service_ids_cache
+        if cached is not None and cached[0] == today_str and monotonic() - cached[1] < SERVICE_IDS_TTL_SECONDS:
+            return cached[2]
+        valid_ids = self._load_valid_service_ids(db, today_str, day_col)
+        self._service_ids_cache = (today_str, monotonic(), valid_ids)
+        return valid_ids
+
+    @staticmethod
+    def _load_valid_service_ids(db: Session, today_str: str, day_col: str) -> set[str] | None:
         # Check if any calendar data exists
         has_calendar = db.execute(select(ServiceCalendar).limit(1)).scalars().first()
         if has_calendar is None:

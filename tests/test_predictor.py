@@ -304,3 +304,17 @@ def test_stale_trip_updates_are_ignored() -> None:
     items = ETAPredictor().get_stop_etas(session, "2001")
 
     assert items and items[0].prediction_source == "schedule"
+
+
+def test_service_ids_are_cached_between_requests() -> None:
+    session = build_session()
+    predictor = ETAPredictor()
+    now = datetime.now(timezone.utc)
+    calls = []
+    original = predictor._load_valid_service_ids
+    predictor._load_valid_service_ids = lambda *a: calls.append(1) or original(*a)  # type: ignore[method-assign]
+
+    predictor._valid_service_ids(session, now)
+    predictor._valid_service_ids(session, now)
+
+    assert len(calls) == 1
