@@ -34,3 +34,18 @@ def test_migrations_drop_redundant_vehicle_indexes() -> None:
     with engine.connect() as conn:
         names = conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).scalars().all()
     assert sorted(names) == ["ix_stops_lat_lon", "ix_trip_updates_stop_recent"]
+
+
+def test_migrations_replace_trip_update_stop_index() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE stops (lat REAL, lon REAL)"))
+        conn.execute(text("CREATE TABLE trip_update_states (stop_id TEXT, observed_at TEXT)"))
+        conn.execute(text("CREATE INDEX ix_trip_update_states_stop_id ON trip_update_states (stop_id)"))
+
+    apply_migrations(engine)
+
+    with engine.connect() as conn:
+        names = conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).scalars().all()
+    assert "ix_trip_update_states_stop_id" not in names
+    assert "ix_trip_updates_stop_recent" in names
