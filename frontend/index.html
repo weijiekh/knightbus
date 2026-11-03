@@ -1312,8 +1312,10 @@ function drawSaved() {
   }
   const labels = savedRouteLabels();
   if (bar) {
-    bar.hidden = labels.length === 0;
-    bar.innerHTML = labels.length ? [null, ...labels].map(l => `<button type="button" data-route-chip="${esc(l || "")}" aria-pressed="${(savedRoute || null) === l}">${l ? esc(l) : "All"}</button>`).join("") : "";
+    // A remembered filter must stay visible even when its route has no arrivals.
+    const filterLabels = savedRoute && !labels.includes(savedRoute) ? [savedRoute, ...labels] : labels;
+    bar.hidden = filterLabels.length === 0;
+    bar.innerHTML = filterLabels.length ? [null, ...filterLabels].map(l => `<button type="button" data-route-chip="${esc(l || "")}" aria-pressed="${(savedRoute || null) === l}">${l ? esc(l) : "All"}</button>`).join("") : "";
   }
   // Route mode keeps the user's saved order (drag to prioritize) and shows only that route's arrivals.
   const ids = savedRoute ? S.saved.filter(id => servesRoute(id, savedRoute)) : S.saved;

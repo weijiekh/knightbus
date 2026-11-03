@@ -61,3 +61,11 @@ test("empty trips show a navigation action instead of accessing a missing stop",
   assert.match(elements["#trip-body"].innerHTML, /href="#\/routes"/);
 });
 
+test("saved filters retain the selected route and All when no arrivals match", () => {
+  const { context, elements } = fixture();
+  vm.runInContext("drawSaved()", context);
+  assert.equal(elements["#saved-routes"].hidden, false);
+  assert.match(elements["#saved-routes"].innerHTML, /aria-pressed="true">190/);
+  assert.match(elements["#saved-routes"].innerHTML, />All</);
+  assert.match(elements["#saved-list"].innerHTML, /Show all/);
+});
