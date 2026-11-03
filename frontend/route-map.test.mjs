@@ -75,3 +75,26 @@ test('selected panel and expansion controls track route state', () => {
   $('#route-map-all').onclick();
   assert.equal($('#selected-bus').innerHTML, '');
 });
+
+test('selection clears when its bus disappears from the refreshed feed', () => {
+  const { ctx, run, $ } = setup();
+  ctx.buses = [{ vehicle_id: 'a', lat: 1, lon: 1, observed_at: new Date().toISOString() }];
+  run('routeState.vehicles = buses; routeState.selected = "missing"; drawRoute()');
+  assert.equal(run('routeState.selected'), null);
+  assert.equal($('#selected-bus').innerHTML, '');
+  assert.doesNotMatch($('#route-list').innerHTML, /bus-row selected/);
+});
+
+test('delayed map initialization ignores superseded renders', () => {
+  const { ctx, run, markers } = setup();
+  const callbacks = [];
+  ctx.whenLeaflet = f => callbacks.push(f);
+  ctx.oldBuses = [{ vehicle_id: 'old', lat: 1, lon: 1 }];
+  ctx.newBuses = [{ vehicle_id: 'new', lat: 2, lon: 2 }];
+  run('drawRouteMap(oldBuses); drawRouteMap(newBuses)');
+  callbacks[0]();
+  assert.equal(markers().length, 0);
+  callbacks[1]();
+  assert.equal(markers().length, 1);
+  assert.match(markers()[0].options.title, /Bus new/);
+});

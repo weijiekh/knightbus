@@ -1523,7 +1523,8 @@ function selectRouteBus(id) {
   if (routeMap && bus?.lat != null && bus?.lon != null) routeMap.setView([bus.lat, bus.lon], 17);
 }
 let routeMap = null;
-function destroyRouteMap() { if (routeMap) { routeMap.remove(); routeMap = null; routeMarkers = null; } }
+let routeMapDraw = 0;
+function destroyRouteMap() { routeMapDraw++; if (routeMap) { routeMap.remove(); routeMap = null; routeMarkers = null; } }
 function renderRoute({ id }) {
   const meta = S.routeMeta[id] || {};
   if (routeState.id !== id) { routeState.id = id; routeState.vehicles = null; routeState.error = false; routeState.selected = null; routeState.direction = "all"; routeState.labels = Object.create(null); routeState.expanded = false; }
@@ -1552,13 +1553,16 @@ async function loadRoute(id) {
 let routeMarkers = null;
 // Map is created once per route visit; refreshes only swap the markers so the user's pan/zoom survives.
 function drawRouteMap(v) {
+  const draw = ++routeMapDraw;
   whenLeaflet(() => {
+    if (draw !== routeMapDraw) return;
     const el = $("#route-map");
     if (!el || !window.L) return;
     const card = el.closest(".route-map-card");
     const pts = v.filter(x => x.lat != null && x.lon != null);
     card.hidden = !pts.length;
     if (!pts.length) {
+      if (routeMap?._busPaint) routeMap.off("zoomend", routeMap._busPaint);
       if (routeMarkers) routeMarkers.clearLayers();
       const status = $("#route-map-status");
       if (status) status.textContent = "GPS coordinates unavailable for these buses";
@@ -1573,6 +1577,7 @@ function drawRouteMap(v) {
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(routeMap);
       routeMarkers = L.layerGroup().addTo(routeMap);
     } else {
+      if (routeMap._busPaint) routeMap.off("zoomend", routeMap._busPaint);
       routeMarkers.clearLayers();
       routeMap.invalidateSize();
     }
@@ -1591,7 +1596,7 @@ function drawRouteMap(v) {
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(x);
       }
-        for (const group of groups.values()) {
+      for (const group of groups.values()) {
         const many = group.length > 1;
         const lat = group.reduce((n, x) => n + x.lat, 0) / group.length;
         const lon = group.reduce((n, x) => n + x.lon, 0) / group.length;
@@ -1621,6 +1626,7 @@ function drawRoute() {
   const allVehicles = routeState.vehicles;
   if (allVehicles && routeState.direction !== "all" && !allVehicles.some(x => busDirection(x) === routeState.direction)) routeState.direction = "all";
   const v = visibleRouteBuses();
+  if (!v.some(x => x.vehicle_id === routeState.selected && x.lat != null && x.lon != null)) routeState.selected = null;
   if (!allVehicles) { destroyRouteMap(); body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load buses</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="refreshView(true)">Retry</button></div>`; return; }
   const directions = new Map();
   allVehicles.forEach(x => { busLabel(x); directions.set(busDirection(x), x.headsign ? `To ${titleCase(x.headsign)}` : x.direction_id != null ? `Direction ${x.direction_id + 1}` : "Direction unavailable"); });
