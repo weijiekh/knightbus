@@ -275,9 +275,16 @@ a.route-badge { text-decoration: none; }
 #route-map { position: absolute; inset: 0; }
 [data-theme="dark"] #route-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 .bus-pin { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; border: 2px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
+.route-map-card.expanded { height: min(70vh, 620px); }
+.bus-pin.stale { opacity: .5; background: var(--text2); }
+.bus-row.selected { border-color: var(--accent); }
+.bus-label { font: 700 13px 'IBM Plex Mono', monospace; }
+.route-map-tools { margin: 8px 20px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text2); flex-wrap: wrap; }
+.route-map-tools button { flex-shrink: 0; }
+.bus-pin.cluster { border-radius: 50%; font: 700 13px 'IBM Plex Mono', monospace; }
 .bus-row { display: flex; flex-direction: column; gap: 10px; }
 .bus-row .links { display: flex; gap: 8px; flex-wrap: wrap; }
-.bus-row .links a { min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-weight: 600; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; }
+.bus-row .links a, .bus-row .links button { min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-weight: 600; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; }
 
 /* ── NAV ── */
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 800; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
@@ -600,6 +607,8 @@ function parseHash() {
 }
 let currentRoute = null;
 function route() {
+  clearTimeout(routeSearchTimer);
+  routeSearchController?.abort();
   currentRoute = parseHash();
   S.view = currentRoute.name;
   const tab = { home: "nearby", stop: "nearby", trip: "nearby", search: "nearby", saved: "saved", routes: "routes", route: "routes" }[S.view];
@@ -1035,7 +1044,7 @@ function arrivalCard(group) {
 }
 
 // ══════════ SEARCH ══════════
-const searchState = { q: "", stops: [], routes: [], places: [], filter: "all", ctrl: { api: null, places: null }, timers: {}, lastNominatimAt: 0, loading: false };
+const searchState = { q: "", stops: [], routes: [], places: [], filter: "all", ctrl: { api: null, places: null }, timers: {}, lastNominatimAt: 0, loading: false, error: false };
 function renderSearch({ q }) {
   view.innerHTML = `
     <div class="search-bar">
@@ -1065,6 +1074,7 @@ function onQuery(raw, immediate) {
   history.replaceState(null, "", "#/search" + (raw ? "/" + encodeURIComponent(raw) : ""));
   if (q !== searchState.q) { searchState.stops = []; searchState.routes = []; searchState.places = []; }
   searchState.q = q;
+  searchState.error = false;
   clearTimeout(searchState.timers.api); clearTimeout(searchState.timers.places);
   searchState.ctrl.api?.abort(); searchState.ctrl.places?.abort();
   if (q.length < 2) { renderResults(); return; }
@@ -1087,7 +1097,10 @@ async function searchApi(q) {
     searchState.stops = res.stops || []; searchState.routes = res.routes || [];
     searchState.stops.forEach(s => rememberStop({ ...s, raw_name: (s.code ? s.code + " " : "") + s.name }));
     searchState.routes.forEach(r => { S.routeMeta[r.route_id] = r; });
-  } catch (err) { if (err.name === "AbortError") return; }
+  } catch (err) {
+    if (err.name === "AbortError" || q !== searchState.q) return;
+    searchState.error = true;
+  }
   searchState.loading = false;
   if (S.view === "search") renderResults();
 }
@@ -1132,7 +1145,10 @@ function renderResults() {
       if (r.kind !== last) { html += `<div class="group-label">${{ stop: "Stops", route: "Routes", place: "Places" }[r.kind]}</div>`; last = r.kind; }
       html += resultRow(r, q);
     }
-    results.innerHTML = html || `<p class="quiet" style="padding:4px">${searchState.loading ? "Searching…" : `No matches for “${esc(q)}”.`}</p>`;
+    const error = searchState.error ? `<div class="panel dashed" style="margin:8px 0"><div class="ptitle">Stop and route search unavailable</div><div class="psub">Check your connection and try again. Place results may still be available.</div><button type="button" class="btn out" id="retry-search">Retry search</button></div>` : "";
+    results.innerHTML = error + (html || (searchState.error ? "" : `<p class="quiet" style="padding:4px">${searchState.loading ? "Searching…" : `No matches for “${esc(q)}”.`}</p>`));
+    const retry = $("#retry-search");
+    if (retry) retry.onclick = () => onQuery(searchState.q, true);
     results.querySelectorAll("[data-i]").forEach((el, i) => { el.dataset.i = i; el.addEventListener("click", e => { e.preventDefault(); pick(list[i]); }); });
   }
   recent.hidden = S.recent.length === 0;
@@ -1206,7 +1222,11 @@ function renderTripBody(stopId) {
     body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load stops</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="tripState.id=null;tripState.data=null;renderTrip(currentRoute)">Retry</button></div>`;
     return;
   }
-  const stops = data.stops;
+  const stops = data.stops || [];
+  if (!stops.length) {
+    body.innerHTML = `<div class="panel dashed"><div class="ptitle">No stops available for this trip</div><div class="psub">Try the route map or another bus to continue your journey.</div><a class="btn out" href="#/routes">Find a route</a></div>`;
+    return;
+  }
   const idx = Math.max(0, stops.findIndex(s => s.stop_id === stopId));
   const cur = stops[idx], prev = stops[idx - 1], next = stops[idx + 1];
   const left = stops.length - 1 - idx;
@@ -1219,20 +1239,20 @@ function renderTripBody(stopId) {
     <div class="panel trip-now trip-hero">
       <div class="label">${next ? "Next stop" : "Final stop"}</div>
       <div class="next-name">${esc(next ? nm(next) : nm(cur))}</div>
-      <div class="now-line">${next ? `${left} stop${left === 1 ? "" : "s"} to go · you are at ${esc(nm(cur))}` : "This is where the bus ends. Time to get off."}</div>
+      <div class="now-line">${next ? `${left} stop${left === 1 ? "" : "s"} to go · selected stop: ${esc(nm(cur))}` : "Final stop on this trip. Check your location before getting off."}</div>
       <div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${stops.length}" aria-valuenow="${idx + 1}" aria-label="Trip progress"><div style="width:${Math.round((idx + 1) / stops.length * 100)}%"></div></div>
       <div class="trip-nav">
         ${prev ? `<a class="btn out" href="${tripStepHref(data.trip_id, prev)}">‹ Back one stop</a>` : `<span class="btn out" aria-disabled="true">‹ Back one stop</span>`}
         ${next ? `<a class="btn" href="${tripStepHref(data.trip_id, next)}">Bus moved on ›</a>` : `<span class="btn" aria-disabled="true">Bus moved on ›</span>`}
       </div>
-      <div class="psub">Tap “Bus moved on” each time the bus leaves a stop, so you always know how far to go.</div>
+      <div class="psub">Manual trip guide · this page does not track your location. Tap “Bus moved on” each time your bus leaves a stop.</div>
     </div>
     <div class="stop-section">All stops on this trip · tap one to jump there</div>
     <div class="list trip-list">${stops.map((s, i) => `
       <a class="row-card trip-row${i === idx ? " current" : ""}${i < idx ? " done" : ""}${i === stops.length - 1 ? " last" : ""}" href="${tripStepHref(data.trip_id, s)}"${i === idx ? ' aria-current="step"' : ""}>
         <span class="num${i === idx ? " first" : ""}" aria-hidden="true">${i + 1}</span>
         <div class="grow"><div class="title">${esc(nm(s))}</div><div class="sub mono">${esc(s.stop_code || s.stop_id)}</div></div>
-        ${i === idx ? '<span class="badge live">YOU ARE HERE</span>' : i === stops.length - 1 ? '<span class="badge">LAST STOP</span>' : i < idx ? '<span class="sub">passed</span>' : ""}
+        ${i === idx ? '<span class="badge sched">SELECTED</span>' : i === stops.length - 1 ? '<span class="badge">LAST STOP</span>' : i < idx ? '<span class="sub">passed</span>' : ""}
       </a>`).join("")}
     </div>`;
   document.querySelector(".trip-row.current")?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -1292,8 +1312,10 @@ function drawSaved() {
   }
   const labels = savedRouteLabels();
   if (bar) {
-    bar.hidden = labels.length === 0;
-    bar.innerHTML = labels.length ? [null, ...labels].map(l => `<button type="button" data-route-chip="${esc(l || "")}" aria-pressed="${(savedRoute || null) === l}">${l ? esc(l) : "All"}</button>`).join("") : "";
+    // A remembered filter must stay visible even when its route has no arrivals.
+    const filterLabels = savedRoute && !labels.includes(savedRoute) ? [savedRoute, ...labels] : labels;
+    bar.hidden = filterLabels.length === 0;
+    bar.innerHTML = filterLabels.length ? [null, ...filterLabels].map(l => `<button type="button" data-route-chip="${esc(l || "")}" aria-pressed="${(savedRoute || null) === l}">${l ? esc(l) : "All"}</button>`).join("") : "";
   }
   // Route mode keeps the user's saved order (drag to prioritize) and shows only that route's arrivals.
   const ids = savedRoute ? S.saved.filter(id => servesRoute(id, savedRoute)) : S.saved;
@@ -1448,22 +1470,66 @@ view.addEventListener("keydown", e => {
 });
 
 // ══════════ ROUTES ══════════
+let routeSearchController = null;
+let routeSearchTimer = null;
+function routeResultCard(r) {
+  return `<a class="row-card" href="#/route/${encodeURIComponent(r.route_id)}"><span class="route-badge sm">${esc(r.short_name || r.route_id)}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")) || "Route " + (r.short_name || r.route_id))}</div></div>${I.chev}</a>`;
+}
 function renderRoutes() {
   const routes = S.recent.filter(r => r.kind === "route");
-  view.innerHTML = `<h1 class="page-title">Routes</h1><p class="page-sub">Pick a bus route to see where its buses are right now.</p>
-    <div class="search-row"><a class="field" href="#/search" style="text-decoration:none;color:var(--text2)">${I.search}<span>Search route number, e.g. <span class="mono">190</span></span></a></div>
-    ${routes.length ? `<div class="sec-head"><h2>Recently viewed</h2></div><div class="list">${routes.map(r => `<a class="row-card" href="#/route/${encodeURIComponent(r.id)}">
-      <span class="route-badge sm">${esc(r.label)}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")))}</div></div>${I.chev}</a>`).join("")}</div>`
-    : `<div class="panel dashed">${I.busLine}<div class="ptitle">No routes yet</div>
-      <div class="psub">Search for a route number above, or open a stop and tap a route number to see its live buses on a map.</div></div>`}`;
+  view.innerHTML = `<h1 class="page-title">Routes</h1><p class="page-sub">Find your route and follow its buses live.</p>
+    <div class="search-row"><div class="field">${I.search}<label for="route-query" class="sr-only">Search routes by number or destination</label><input id="route-query" type="search" placeholder="Route number or destination" autocomplete="off" maxlength="64"></div></div>
+    <div id="route-results" aria-live="polite"></div>
+    <div id="recent-routes">${routes.length ? `<div class="sec-head"><h2>Recently viewed</h2></div><div class="list">${routes.map(r => routeResultCard({ route_id: r.id, short_name: r.label, long_name: r.long_name })).join("")}</div>`
+    : `<div class="panel dashed">${I.busLine}<div class="ptitle">Where are you heading?</div><div class="psub">Search a route number like 190 or a destination. Routes you open will appear here.</div></div>`}</div>`;
+  $("#route-query").addEventListener("input", e => {
+    clearTimeout(routeSearchTimer);
+    routeSearchController?.abort();
+    const q = e.target.value.trim();
+    $("#recent-routes").hidden = !!q;
+    $("#route-results").innerHTML = q ? `<p class="quiet" style="padding:0 20px">${q.length < 2 ? "Enter at least 2 characters to find a route." : "Searching routes…"}</p>` : "";
+    if (q.length >= 2) routeSearchTimer = setTimeout(() => searchRoutes(q), 250);
+  });
 }
-const routeState = { id: null, vehicles: null, at: 0 };
+async function searchRoutes(q) {
+  const controller = new AbortController();
+  routeSearchController = controller;
+  try {
+    const data = await apiFetch(`/v1/search?${new URLSearchParams({ q, limit: "20" })}`, controller.signal);
+    if (controller.signal.aborted || S.view !== "routes" || $("#route-query")?.value.trim() !== q) return;
+    const routes = data.routes || [];
+    routes.forEach(r => { S.routeMeta[r.route_id] = r; });
+    $("#route-results").innerHTML = routes.length
+      ? `<div class="sec-head"><h2>Matching routes</h2></div><div class="list">${routes.map(routeResultCard).join("")}</div>`
+      : `<div class="panel dashed"><div class="ptitle">No matching routes</div><div class="psub">Try another route number or destination.</div></div>`;
+  } catch (err) {
+    if (err.name === "AbortError" || S.view !== "routes" || $("#route-query")?.value.trim() !== q) return;
+    $("#route-results").innerHTML = `<div class="panel dashed"><div class="ptitle">Can't search routes</div><div class="psub">Check your connection, then try again.</div><button type="button" class="btn" id="retry-route-search">Retry</button></div>`;
+    $("#retry-route-search").onclick = () => searchRoutes(q);
+  }
+}
+const routeState = { id: null, vehicles: null, at: 0, error: false, selected: null, direction: "all", labels: Object.create(null), expanded: false };
+function busLabel(x) {
+  if (!routeState.labels[x.vehicle_id]) routeState.labels[x.vehicle_id] = `B${Object.keys(routeState.labels).length + 1}`;
+  return routeState.labels[x.vehicle_id];
+}
+function busStale(x) { return !Number.isFinite(Date.parse(x.observed_at)) || Date.now() - Date.parse(x.observed_at) > 5 * 60 * 1000; }
+function busDirection(x) { return x.direction_id != null ? `direction:${x.direction_id}` : x.headsign ? `destination:${x.headsign}` : "unknown"; }
+function visibleRouteBuses() { return (routeState.vehicles || []).filter(x => routeState.direction === "all" || busDirection(x) === routeState.direction); }
+function selectRouteBus(id) {
+  routeState.selected = id;
+  drawRoute();
+  const bus = visibleRouteBuses().find(x => x.vehicle_id === id);
+  if (routeMap && bus?.lat != null && bus?.lon != null) routeMap.setView([bus.lat, bus.lon], 17);
+}
 let routeMap = null;
-function destroyRouteMap() { if (routeMap) { routeMap.remove(); routeMap = null; routeMarkers = null; } }
+let routeMapDraw = 0;
+function destroyRouteMap() { routeMapDraw++; if (routeMap) { routeMap.remove(); routeMap = null; routeMarkers = null; } }
 function renderRoute({ id }) {
   const meta = S.routeMeta[id] || {};
-  if (routeState.id !== id) { routeState.id = id; routeState.vehicles = null; }
+  if (routeState.id !== id) { routeState.id = id; routeState.vehicles = null; routeState.error = false; routeState.selected = null; routeState.direction = "all"; routeState.labels = Object.create(null); routeState.expanded = false; }
   const label = meta.short_name || id;
+  addRecent({ kind: "route", id, label, long_name: meta.long_name });
   const long = meta.long_name ? titleCase(meta.long_name.replace(/\s*~\s*/g, " ↔ ")) : "";
   view.innerHTML = `
     <div class="bar"><button type="button" class="icon-btn ghost" aria-label="Back" onclick="goBack()">${I.back}</button><div style="flex:1"></div>
@@ -1471,7 +1537,7 @@ function renderRoute({ id }) {
     <div class="stop-head"><div class="code">Live buses on route</div>
       <h1><span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(label)}</span>${esc(long)}</h1>
       <div class="fresh" id="route-fresh"></div></div>
-    <div id="route-body"></div>`;
+    <div class="route-filter" id="route-directions" role="group" aria-label="Filter buses by direction"></div><div id="route-body"></div>`;
   if (routeState.vehicles) drawRoute(); else loadRoute(id);
 }
 async function loadRoute(id) {
@@ -1480,62 +1546,135 @@ async function loadRoute(id) {
   try {
     const v = await apiFetch(`/v1/routes/${encodeURIComponent(id)}/vehicles`);
     if (routeState.id !== id) return;
-    routeState.vehicles = v; routeState.at = Date.now();
-  } catch { /* keep last data */ }
+    routeState.vehicles = v; routeState.at = Date.now(); routeState.error = false;
+  } catch { if (routeState.id === id) routeState.error = true; }
   if (S.view === "route" && currentRoute.id === id) drawRoute();
 }
 let routeMarkers = null;
 // Map is created once per route visit; refreshes only swap the markers so the user's pan/zoom survives.
 function drawRouteMap(v) {
+  const draw = ++routeMapDraw;
   whenLeaflet(() => {
+    if (draw !== routeMapDraw) return;
     const el = $("#route-map");
     if (!el || !window.L) return;
     const card = el.closest(".route-map-card");
     const pts = v.filter(x => x.lat != null && x.lon != null);
     card.hidden = !pts.length;
-    if (!pts.length) return;
+    if (!pts.length) {
+      if (routeMap?._busPaint) routeMap.off("zoomend", routeMap._busPaint);
+      if (routeMarkers) routeMarkers.clearLayers();
+      const status = $("#route-map-status");
+      if (status) status.textContent = "GPS coordinates unavailable for these buses";
+      $("#route-map-expand").hidden = true;
+      $("#route-map-all").hidden = true;
+      return;
+    }
+    $("#route-map-expand").hidden = false;
     const fresh = !routeMap;
     if (fresh) {
       routeMap = L.map("route-map", mapOptions());
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(routeMap);
       routeMarkers = L.layerGroup().addTo(routeMap);
     } else {
+      if (routeMap._busPaint) routeMap.off("zoomend", routeMap._busPaint);
       routeMarkers.clearLayers();
       routeMap.invalidateSize();
     }
-    const ll = [];
-    const busSvg = I.busLine.replace('width="28" height="28"', 'width="16" height="16"').replace('stroke="var(--accent)"', 'stroke="currentColor"');
-    for (const x of pts) {
-      ll.push([x.lat, x.lon]);
-      L.marker([x.lat, x.lon], { icon: L.divIcon({ className: "", html: `<div class="bus-pin">${busSvg}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }), title: `Bus ${x.vehicle_id}`, alt: `Bus ${x.vehicle_id}` }).addTo(routeMarkers);
-    }
-    if (S.loc) { ll.push([S.loc.lat, S.loc.lon]); L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false }).addTo(routeMarkers); }
+    const selected = pts.find(x => x.vehicle_id === routeState.selected);
+    if (!selected) routeState.selected = null;
+    const shown = selected ? [selected] : pts;
+    const ll = shown.map(x => [x.lat, x.lon]);
     if (fresh) routeMap.fitBounds(ll, { padding: [30, 30], maxZoom: 16 });
+    const paint = () => {
+      routeMarkers.clearLayers();
+      // Group in screen space so overlapping buses separate naturally as the user zooms.
+      const groups = new Map();
+      for (const x of shown) {
+        const point = routeMap.project([x.lat, x.lon], routeMap.getZoom());
+        const key = `${Math.floor(point.x / 48)},${Math.floor(point.y / 48)}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(x);
+      }
+      for (const group of groups.values()) {
+        const many = group.length > 1;
+        const lat = group.reduce((n, x) => n + x.lat, 0) / group.length;
+        const lon = group.reduce((n, x) => n + x.lon, 0) / group.length;
+        const label = many ? `${group.length} buses · zoom in to separate` : `${busLabel(group[0])} · Bus ${group[0].vehicle_id}${busStale(group[0]) ? " · GPS older than 5 minutes" : ""}`;
+        const marker = L.marker([lat, lon], { icon: L.divIcon({ className: "", html: `<div class="bus-pin${many ? " cluster" : ""}${group.every(busStale) ? " stale" : ""}">${many ? group.length : esc(busLabel(group[0]))}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }), title: label, alt: label }).addTo(routeMarkers);
+        // Text nodes keep provider vehicle IDs safe in Leaflet popups.
+        const content = document.createElement("div");
+        content.textContent = many ? `Buses: ${group.map(x => x.vehicle_id).join(", ")}` : label;
+        marker.bindPopup(content);
+        if (many) marker.on("click", () => routeMap.setView([lat, lon], Math.min(routeMap.getZoom() + 2, 19)));
+        else { marker.on("click", () => selectRouteBus(group[0].vehicle_id)); if (selected) marker.openPopup(); }
+      }
+    };
+    if (routeMap._busPaint) routeMap.off("zoomend", routeMap._busPaint);
+    routeMap._busPaint = paint;
+    routeMap.on("zoomend", paint);
+    paint();
+    const status = $("#route-map-status"), all = $("#route-map-all");
+    if (status) status.textContent = selected ? `Showing bus ${selected.vehicle_id}` : `${pts.length} buses on map · tap a numbered group to zoom`;
+    if (all) all.hidden = !selected;
+
   });
 }
 function drawRoute() {
   const body = $("#route-body");
   if (!body) return;
-  const v = routeState.vehicles;
-  if (!v) { destroyRouteMap(); body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load buses</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="refreshView(true)">Retry</button></div>`; return; }
-  $("#route-fresh").innerHTML = `<span class="dot${v.length ? " live" : ""}"></span><span>${v.length} bus${v.length === 1 ? "" : "es"} running now · updated <span data-ago="${routeState.at}">${ago(routeState.at)}</span></span>`;
+  const allVehicles = routeState.vehicles;
+  if (allVehicles && routeState.direction !== "all" && !allVehicles.some(x => busDirection(x) === routeState.direction)) routeState.direction = "all";
+  const v = visibleRouteBuses();
+  if (!v.some(x => x.vehicle_id === routeState.selected && x.lat != null && x.lon != null)) routeState.selected = null;
+  if (!allVehicles) { destroyRouteMap(); body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load buses</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="refreshView(true)">Retry</button></div>`; return; }
+  const directions = new Map();
+  allVehicles.forEach(x => { busLabel(x); directions.set(busDirection(x), x.headsign ? `To ${titleCase(x.headsign)}` : x.direction_id != null ? `Direction ${x.direction_id + 1}` : "Direction unavailable"); });
+  if (routeState.direction !== "all" && !directions.has(routeState.direction)) routeState.direction = "all";
+  const filters = $("#route-directions");
+  filters.innerHTML = [["all", "All directions"], ...directions].map(([key, label]) => `<button type="button" data-direction="${esc(key)}" aria-pressed="${routeState.direction === key}">${esc(label)}</button>`).join("");
+  filters.hidden = directions.size < 2;
+  filters.onclick = e => { const button = e.target.closest("[data-direction]"); if (button) { routeState.direction = button.dataset.direction; routeState.selected = null; destroyRouteMap(); drawRoute(); } };
+  $("#route-fresh").innerHTML = `<span class="dot${v.some(x => !busStale(x)) && !routeState.error ? " live" : ""}"></span><span>${routeState.error ? "Refresh failed · showing last positions · updated" : `${v.length} bus${v.length === 1 ? "" : "es"} reporting · updated`} <span data-ago="${routeState.at}">${ago(routeState.at)}</span></span>`;
   if (!v.length) { destroyRouteMap(); body.innerHTML = `<div class="panel dashed">${I.empty}<div class="ptitle">No live buses on this route</div><div class="psub">Buses may not be running right now, or aren't sending GPS. Check a stop's timetable for scheduled times.</div><a class="btn out" href="#/">Back to nearby stops</a></div>`; return; }
   if (!$("#route-list")) { // first draw (or coming back from an empty/error state): build the shell once
     destroyRouteMap();
     body.innerHTML = `<div class="route-map-card"><div id="route-map" role="region" aria-label="Map of live buses on this route"></div></div>
+      <div class="route-map-tools"><span id="route-map-status" aria-live="polite"></span><button type="button" class="btn out" id="route-map-all" hidden>Show all buses</button><button type="button" class="btn out" id="route-map-expand" aria-expanded="false">Expand map</button></div><div class="quiet" style="margin:0 20px 12px">Faded markers: GPS older than 5 minutes. Labels match the bus cards below.</div><div id="selected-bus" aria-live="polite"></div>
       <div class="stop-section">Buses on this route</div><div class="list" id="route-list"></div>`;
   }
-  const busIcon = I.busLine.replace('width="28" height="28"', 'width="18" height="18"').replace('stroke="var(--accent)"', 'stroke="currentColor"');
-  $("#route-list").innerHTML = v.map(x => {
+  $("#route-list").innerHTML = v.map((x, index) => {
     const seen = Date.parse(x.observed_at);
-    const stop = x.stop_id ? stopDisplay(x.stop_id) : null;
+    const stop = x.stop_id ? { ...stopDisplay(x.stop_id), ...(x.stop_name ? { name: titleCase(x.stop_name) } : {}) } : null;
+    const locate = x.lat != null && x.lon != null ? `<button type="button" data-locate-bus="${index}">Show on map</button>` : "";
     const follow = x.trip_id && x.stop_id ? `<a href="#/trip/${encodeURIComponent(x.trip_id)}/${encodeURIComponent(x.stop_id)}">Follow this bus →</a>` : "";
-    return `<div class="row-card bus-row"><div style="display:flex;align-items:center;gap:12px"><span class="res-ico">${busIcon}</span>
+    return `<div class="row-card bus-row${routeState.selected === x.vehicle_id ? " selected" : ""}"><div style="display:flex;align-items:center;gap:12px"><span class="res-ico bus-label">${esc(busLabel(x))}</span>
       <div class="grow"><div class="title">${stop ? `Near ${esc(stop.name)}` : `Bus ${esc(x.vehicle_id)}`}</div>
-      <div class="sub">Bus <span class="mono">${esc(x.vehicle_id)}</span> · seen <span data-ago="${seen}">${ago(seen)}</span></div></div></div>
-      ${stop || follow ? `<div class="links">${stop ? `<a href="#/stop/${encodeURIComponent(x.stop_id)}">Arrivals at this stop</a>` : ""}${follow}</div>` : ""}</div>`;
+      <div class="sub">${x.headsign ? `To ${esc(titleCase(x.headsign))} · ` : ""}Bus <span class="mono">${esc(x.vehicle_id)}</span>${busStale(x) ? " · Older GPS" : ""} · seen <span data-ago="${seen}">${ago(seen)}</span></div></div></div>
+      ${stop || follow || locate ? `<div class="links">${locate}${stop ? `<a href="#/stop/${encodeURIComponent(x.stop_id)}">Arrivals at this stop</a>` : ""}${follow}</div>` : ""}</div>`;
   }).join("");
+  const selected = v.find(x => x.vehicle_id === routeState.selected);
+  $("#selected-bus").innerHTML = selected ? `<div class="panel"><div class="ptitle">${esc(busLabel(selected))} · Bus ${esc(selected.vehicle_id)}</div><div class="psub">${selected.headsign ? `To ${esc(titleCase(selected.headsign))} · ` : ""}${selected.stop_name ? `Near ${esc(titleCase(selected.stop_name))}` : "Nearest stop unavailable"}<br>${busStale(selected) ? "Older GPS · " : ""}Last seen <span data-ago="${Date.parse(selected.observed_at)}">${ago(Date.parse(selected.observed_at))}</span></div>${selected.trip_id && selected.stop_id ? `<a class="btn out" href="#/trip/${encodeURIComponent(selected.trip_id)}/${encodeURIComponent(selected.stop_id)}">Follow this bus</a>` : ""}</div>` : "";
+  const mapCard = $("#route-map").closest(".route-map-card");
+  mapCard.classList.toggle("expanded", routeState.expanded);
+  const expand = $("#route-map-expand");
+  expand.textContent = routeState.expanded ? "Collapse map" : "Expand map";
+  expand.setAttribute("aria-expanded", String(routeState.expanded));
+  expand.onclick = () => { routeState.expanded = !routeState.expanded; drawRoute(); };
   drawRouteMap(v);
+  $("#route-map-all").onclick = () => {
+    routeState.selected = null;
+    drawRoute();
+    const points = v.filter(x => x.lat != null && x.lon != null).map(x => [x.lat, x.lon]);
+    if (routeMap && points.length) routeMap.fitBounds(points, { padding: [30, 30], maxZoom: 16 });
+  };
+  $("#route-list").onclick = e => {
+    const button = e.target.closest("[data-locate-bus]");
+    if (!button || !routeMap) return;
+    const bus = v[Number(button.dataset.locateBus)];
+    selectRouteBus(bus.vehicle_id);
+    $("#route-map").scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 }
 
 // ══════════ BOOT ══════════
