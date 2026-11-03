@@ -487,6 +487,18 @@ async function fetchEtas(stopId) {
   try { const data = await apiFetch(`/v1/stops/${encodeURIComponent(stopId)}/etas`); rememberStopFromEtas(data); return data; }
   catch (err) { if (err.status === 404) return { stop_id: stopId, items: [], generated_at: new Date().toISOString() }; throw err; }
 }
+// One request for many stops (nearby list). Falls back to per-stop calls if the batch endpoint is missing (older API).
+async function fetchEtasMany(stopIds) {
+  if (stopIds.length === 0) return [];
+  try {
+    const list = await apiFetch(`/v1/stops/etas?stop_ids=${stopIds.map(encodeURIComponent).join(",")}`);
+    const byId = new Map(list.map(d => { rememberStopFromEtas(d); return [d.stop_id, d]; }));
+    return stopIds.map(id => byId.get(id) ?? null);
+  } catch (err) {
+    if (err.status !== 404 && err.status !== 405 && err.status !== 422) return stopIds.map(() => null);
+    return Promise.all(stopIds.map(id => fetchEtas(id).catch(() => null)));
+  }
+}
 function setOffline(on) {
   S.offline = on;
   $("#offline").hidden = !on;
@@ -722,7 +734,7 @@ async function loadNearby(silent) {
     return;
   }
   stops.forEach(rememberStop);
-  const etas = await Promise.all(stops.map(s => fetchEtas(s.stop_id).catch(() => null)));
+  const etas = await fetchEtasMany(stops.map(s => s.stop_id));
   if (seq !== nearbySeq) return;
   S.nearby = stops.map((stop, i) => ({ stop, eta: etas[i] }));
   S.nearbyAt = Date.now();
