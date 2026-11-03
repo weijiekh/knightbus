@@ -1222,7 +1222,11 @@ function renderTripBody(stopId) {
     body.innerHTML = `<div class="panel dashed"><div class="ptitle">Can't load stops</div><div class="psub">Check your connection and retry.</div><button type="button" class="btn" onclick="tripState.id=null;tripState.data=null;renderTrip(currentRoute)">Retry</button></div>`;
     return;
   }
-  const stops = data.stops;
+  const stops = data.stops || [];
+  if (!stops.length) {
+    body.innerHTML = `<div class="panel dashed"><div class="ptitle">No stops available for this trip</div><div class="psub">Try the route map or another bus to continue your journey.</div><a class="btn out" href="#/routes">Find a route</a></div>`;
+    return;
+  }
   const idx = Math.max(0, stops.findIndex(s => s.stop_id === stopId));
   const cur = stops[idx], prev = stops[idx - 1], next = stops[idx + 1];
   const left = stops.length - 1 - idx;
@@ -1235,20 +1239,20 @@ function renderTripBody(stopId) {
     <div class="panel trip-now trip-hero">
       <div class="label">${next ? "Next stop" : "Final stop"}</div>
       <div class="next-name">${esc(next ? nm(next) : nm(cur))}</div>
-      <div class="now-line">${next ? `${left} stop${left === 1 ? "" : "s"} to go · you are at ${esc(nm(cur))}` : "This is where the bus ends. Time to get off."}</div>
+      <div class="now-line">${next ? `${left} stop${left === 1 ? "" : "s"} to go · selected stop: ${esc(nm(cur))}` : "Final stop on this trip. Check your location before getting off."}</div>
       <div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${stops.length}" aria-valuenow="${idx + 1}" aria-label="Trip progress"><div style="width:${Math.round((idx + 1) / stops.length * 100)}%"></div></div>
       <div class="trip-nav">
         ${prev ? `<a class="btn out" href="${tripStepHref(data.trip_id, prev)}">‹ Back one stop</a>` : `<span class="btn out" aria-disabled="true">‹ Back one stop</span>`}
         ${next ? `<a class="btn" href="${tripStepHref(data.trip_id, next)}">Bus moved on ›</a>` : `<span class="btn" aria-disabled="true">Bus moved on ›</span>`}
       </div>
-      <div class="psub">Tap “Bus moved on” each time the bus leaves a stop, so you always know how far to go.</div>
+      <div class="psub">Manual trip guide · this page does not track your location. Tap “Bus moved on” each time your bus leaves a stop.</div>
     </div>
     <div class="stop-section">All stops on this trip · tap one to jump there</div>
     <div class="list trip-list">${stops.map((s, i) => `
       <a class="row-card trip-row${i === idx ? " current" : ""}${i < idx ? " done" : ""}${i === stops.length - 1 ? " last" : ""}" href="${tripStepHref(data.trip_id, s)}"${i === idx ? ' aria-current="step"' : ""}>
         <span class="num${i === idx ? " first" : ""}" aria-hidden="true">${i + 1}</span>
         <div class="grow"><div class="title">${esc(nm(s))}</div><div class="sub mono">${esc(s.stop_code || s.stop_id)}</div></div>
-        ${i === idx ? '<span class="badge live">YOU ARE HERE</span>' : i === stops.length - 1 ? '<span class="badge">LAST STOP</span>' : i < idx ? '<span class="sub">passed</span>' : ""}
+        ${i === idx ? '<span class="badge sched">SELECTED</span>' : i === stops.length - 1 ? '<span class="badge">LAST STOP</span>' : i < idx ? '<span class="sub">passed</span>' : ""}
       </a>`).join("")}
     </div>`;
   document.querySelector(".trip-row.current")?.scrollIntoView({ block: "center", behavior: "smooth" });

@@ -54,3 +54,10 @@ test("failed requests from an old query do not mark the current query as failed"
   assert.equal(context.searchState.error, false);
 });
 
+test("empty trips show a navigation action instead of accessing a missing stop", () => {
+  const { context, elements } = fixture();
+  vm.runInContext('renderTripBody("missing")', context);
+  assert.match(elements["#trip-body"].innerHTML, /No stops available/);
+  assert.match(elements["#trip-body"].innerHTML, /href="#\/routes"/);
+});
+
