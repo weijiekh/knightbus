@@ -426,8 +426,9 @@ function stopDistance(id) {
 const clockFmt = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 function clock(iso) { return iso ? clockFmt.format(new Date(iso)) : "—"; }
 function minutesOf(item) {
-  if (item.minutes_away != null) return item.minutes_away;
-  return item.predicted_arrival_time ? Math.round((new Date(item.predicted_arrival_time) - Date.now()) / 60000) : null;
+  if (!item?.predicted_arrival_time) return null;
+  const arrival = Date.parse(item.predicted_arrival_time);
+  return Number.isFinite(arrival) ? Math.floor((arrival - Date.now()) / 60000) : null;
 }
 // ≤0 → "Now"; 1–59 → "N min"; ≥60 → clock time in KL
 function fmtArrival(item) {
@@ -441,7 +442,21 @@ function klMinutesOfDay(d = new Date()) {
   const [h, m] = clockFmt.format(d).split(":").map(Number);
   return h * 60 + m;
 }
-function isLive(item) { return item.prediction_source && item.prediction_source !== "schedule"; }
+const LIVE_EVIDENCE_MAX_AGE_MS = 120000;
+function arrivalFreshness(item, now = Date.now()) {
+  if (!item?.prediction_source || item.prediction_source === "schedule") return "timetable";
+  const observed = Date.parse(item.data_timestamp);
+  if (item.vehicle_id && Number.isFinite(observed) && observed <= now + 30000 && now - observed <= LIVE_EVIDENCE_MAX_AGE_MS) return "live";
+  if (item.vehicle_id && Number.isFinite(observed) && now - observed > LIVE_EVIDENCE_MAX_AGE_MS) return "stale";
+  return "estimated";
+}
+function isLive(item) { return arrivalFreshness(item) === "live"; }
+function freshnessSummary(items) {
+  const states = items.map(it => arrivalFreshness(it));
+  const hasLive = states.includes("live");
+  return hasLive ? (states.some(state => state !== "live") ? "Mixed freshness" : "Live")
+    : states.includes("stale") ? "Stale" : states.includes("estimated") ? "Estimated" : "Timetable";
+}
 function routeLabel(item) {
   return item.route_short_name || (item.route_long_name && item.route_long_name.length <= 10 ? item.route_long_name : null) || item.route_id || "—";
 }
@@ -461,10 +476,10 @@ function highlight(text, q) {
 }
 function $(sel, root = document) { return root.querySelector(sel); }
 
-// Upcoming items (drops arrivals already in the past relative to generation time)
+// Upcoming items are filtered against the user's current clock, not a possibly old API snapshot.
 function upcoming(data) {
-  const gen = data?.generated_at ? new Date(data.generated_at) : new Date();
-  return (data?.items || []).filter(it => !it.predicted_arrival_time || new Date(it.predicted_arrival_time) >= gen - 60000)
+  const now = Date.now();
+  return (data?.items || []).filter(it => !it.predicted_arrival_time || Date.parse(it.predicted_arrival_time) >= now)
     .sort((a, b) => (minutesOf(a) ?? 1e9) - (minutesOf(b) ?? 1e9));
 }
 // Group by route_short_name + headsign
@@ -496,10 +511,12 @@ function delayBadge(item) {
   if (m < -5 && m >= -30) return `<span class="badge early">${-m} min early</span>`;
   return "";
 }
-function newestTimestamp(data) {
-  let t = 0;
-  for (const it of data?.items || []) if (it.data_timestamp) t = Math.max(t, Date.parse(it.data_timestamp));
-  return t || (data?.generated_at ? Date.parse(data.generated_at) : 0);
+function oldestEvidenceTimestamp(data, items = data?.items || []) {
+  const evidence = items
+    .filter(it => it.prediction_source && it.prediction_source !== "schedule" && it.vehicle_id && it.data_timestamp)
+    .map(it => Date.parse(it.data_timestamp)).filter(Number.isFinite);
+  if (evidence.length) return Math.min(...evidence);
+  return data?.generated_at ? Date.parse(data.generated_at) : 0;
 }
 
 // ══════════ NETWORK ══════════
@@ -635,8 +652,47 @@ function refreshView(force) {
   else if (S.view === "route") loadRoute(currentRoute.id);
 }
 // 1 s tick: freshness labels + auto-refresh every 30 s while visible
+function rerenderCurrentData() {
+  const active = document.activeElement;
+  const id = active?.id;
+  const href = active?.getAttribute("href");
+  const savedId = active?.closest?.(".saved-item")?.dataset.id;
+  if (S.view === "home") renderHomeBody();
+  else if (S.view === "stop") renderStopBody();
+  else if (S.view === "saved" && !savedDrag) drawSaved();
+  const target = id ? document.getElementById(id) : href ? [...document.querySelectorAll("[href]")].find(el => el.getAttribute("href") === href)
+    : savedId ? [...document.querySelectorAll(".saved-item")].find(el => el.dataset.id === savedId)?.querySelector(".drag-handle") : null;
+  target?.focus({ preventScroll: true });
+}
 setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  let needsRender = false;
   document.querySelectorAll("[data-ago]").forEach(el => { el.textContent = ago(Number(el.dataset.ago)); });
+  document.querySelectorAll("[data-countdown]").forEach(el => {
+    const item = { predicted_arrival_time: el.dataset.countdown };
+    const m = minutesOf(item);
+    if (m == null) return;
+    if (Date.parse(item.predicted_arrival_time) < Date.now()) {
+      needsRender = true;
+      return;
+    }
+    if (el.dataset.countdownKind === "card") el.innerHTML = m <= 0 ? "Now" : m < 60 ? `${m}<small> min</small>` : esc(clock(item.predicted_arrival_time));
+    else if (el.dataset.countdownKind === "then") el.textContent = fmtArrival(item);
+    else {
+      el.textContent = fmtArrival(item);
+      el.classList.toggle("soon", m <= 5);
+    }
+  });
+  document.querySelectorAll(".arr[data-freshness]").forEach(card => {
+    const observed = Number(card.dataset.evidenceAt);
+    if (card.dataset.freshness !== "live" || !Number.isFinite(observed) || Date.now() - observed <= LIVE_EVIDENCE_MAX_AGE_MS) return;
+    needsRender = true;
+  });
+  if (S.view === "stop" && stopState.data) {
+    const summary = document.querySelector("#fresh [data-freshness-summary]");
+    if (summary && summary.textContent !== freshnessSummary(upcoming(stopState.data))) needsRender = true;
+  }
+  if (needsRender && !(S.view === "saved" && savedDrag)) rerenderCurrentData();
   updateOfflineText();
   if (document.visibilityState === "visible" && ["home", "stop", "saved", "route"].includes(S.view)
       && S.lastLoadAt && Date.now() - S.lastLoadAt >= REFRESH_SECS * 1000) refreshView();
@@ -796,7 +852,8 @@ function nearbyCard({ stop, eta }, i) {
 // One route + next arrival, used in nearby and saved listings.
 function arrivalChip(it) {
   const m = minutesOf(it);
-  return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}">${esc(fmtArrival(it))}</span></div>`;
+  const countdown = it.predicted_arrival_time ? ` data-countdown="${esc(it.predicted_arrival_time)}"` : "";
+  return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}"${countdown}>${esc(fmtArrival(it))}</span></div>`;
 }
 let nearbySeq = 0;
 let nearbyAtKey = null;
@@ -1019,9 +1076,10 @@ function renderStopBody() {
     return;
   }
   const items = upcoming(data);
-  const anyLive = items.some(isLive);
-  const ts = newestTimestamp(data) || stopState.at;
-  fresh.innerHTML = `<span class="dot${anyLive ? " live" : ""}"></span><span>${anyLive ? "Live" : "Timetable"} · updated <span data-ago="${ts}">${ago(ts)}</span></span>`;
+  const freshness = freshnessSummary(items);
+  const anyLive = freshness === "Live" || freshness === "Mixed freshness";
+  const ts = oldestEvidenceTimestamp(data, items) || stopState.at;
+  fresh.innerHTML = `<span class="dot${anyLive ? " live" : ""}"></span><span><span data-freshness-summary>${freshness}</span> · updated <span data-ago="${ts}">${ago(ts)}</span></span>`;
 
   if (isNight(items)) {
     const firsts = firstBusPerRoute(items).slice(0, 6);
@@ -1045,7 +1103,7 @@ function renderStopBody() {
   </div>` + legend();
 }
 function legend() {
-  return `<div class="legend">${I.info}<span>LIVE = GPS from the bus. SCHEDULED = timetable only; may change.</span></div>`;
+  return `<div class="legend">${I.info}<span>LIVE = recent bus data. ESTIMATED = prediction without fresh bus data. STALE = bus data is old. TIMETABLE = scheduled time only.</span></div>`;
 }
 function routeBadgeLink(it) {
   if (!it.route_id) return `<span class="route-badge">${esc(routeLabel(it))}</span>`;
@@ -1054,7 +1112,8 @@ function routeBadgeLink(it) {
 }
 function arrivalCard(group) {
   const first = group[0];
-  const live = isLive(first);
+  const freshness = arrivalFreshness(first);
+  const live = freshness === "live";
   const m = minutesOf(first);
   const dest = first.headsign ? `to ${titleCase(first.headsign)}` : (first.route_long_name ? titleCase(first.route_long_name.replace(/\s*~\s*/g, " ↔ ")) : "");
   let big;
@@ -1062,23 +1121,27 @@ function arrivalCard(group) {
   else if (m <= 0) big = "Now";
   else if (m < 60) big = `${m}<small> min</small>`;
   else big = esc(clock(first.predicted_arrival_time));
-  const sub = live ? "" : `Scheduled ${clock(first.scheduled_arrival_time || first.predicted_arrival_time)}`;
+  const countdown = first.predicted_arrival_time ? ` data-countdown="${esc(first.predicted_arrival_time)}" data-countdown-kind="card"` : "";
+  const sub = freshness === "timetable" ? `Scheduled ${clock(first.scheduled_arrival_time || first.predicted_arrival_time)}` : "";
   const rest = group.slice(1, 3);
   let then = "";
   if (rest.length) {
     const allMin = rest.every(it => { const x = minutesOf(it); return x != null && x > 0 && x < 60; });
-    then = allMin ? `then ${rest.map(minutesOf).join(" · ")} min` : `then ${rest.map(fmtArrival).join(" · ")}`;
+    then = allMin ? `then ${rest.map(it => `<span${it.predicted_arrival_time ? ` data-countdown="${esc(it.predicted_arrival_time)}" data-countdown-kind="then"` : ""}>${minutesOf(it)} min</span>`).join(" · ")}` : `then ${rest.map(it => `<span${it.predicted_arrival_time ? ` data-countdown="${esc(it.predicted_arrival_time)}" data-countdown-kind="then"` : ""}>${esc(fmtArrival(it))}</span>`).join(" · ")}`;
   }
-  return `<div class="arr${live ? " live" : ""}">
+  const stateLabel = { live: "LIVE", estimated: "ESTIMATED", stale: "STALE", timetable: "TIMETABLE" }[freshness];
+  const observed = Date.parse(first.data_timestamp);
+  const evidence = Number.isFinite(observed) ? ` data-evidence-at="${observed}"` : "";
+  return `<div class="arr${live ? " live" : ""}" data-freshness="${freshness}"${evidence}>
     <div class="arr-top">
       ${routeBadgeLink(first)}
       <div class="grow"><div class="dest">${esc(dest)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>
-      <div class="big ${live ? "live" : "sched"}">${big}</div>
+      <div class="big ${live ? "live" : "sched"}"${countdown}>${big}</div>
     </div>
     <div class="arr-bot">
-      ${live ? '<span class="badge live">LIVE</span>' : '<span class="badge sched">SCHEDULED</span>'}
+      ${live ? '<span class="badge live">LIVE</span>' : `<span class="badge ${freshness === "stale" ? "late" : "sched"}">${stateLabel}</span>`}
       ${live ? delayBadge(first) : ""}
-      ${then ? `<span class="then">${esc(then)}</span>` : (live ? "" : '<span class="sub">no live bus yet</span>')}
+      ${then ? `<span class="then">${then}</span>` : (live ? "" : `<span class="sub">${freshness === "stale" ? "last bus update is old" : freshness === "estimated" ? "no fresh bus location" : "no live bus yet"}</span>`)}
       ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}">Follow this bus →</a>` : ""}
     </div>
   </div>`;
