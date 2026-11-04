@@ -530,14 +530,22 @@ async function fetchEtas(stopId) {
 // One request for many stops (nearby list). Falls back to per-stop calls if the batch endpoint is missing (older API).
 async function fetchEtasMany(stopIds) {
   if (stopIds.length === 0) return [];
-  try {
-    const list = await apiFetch(`/v1/stops/etas?stop_ids=${stopIds.map(encodeURIComponent).join(",")}`);
-    const byId = new Map(list.map(d => { rememberStopFromEtas(d); return [d.stop_id, d]; }));
-    return stopIds.map(id => byId.get(id) ?? null);
-  } catch (err) {
-    if (err.status !== 404 && err.status !== 405 && err.status !== 422) return stopIds.map(() => null);
-    return Promise.all(stopIds.map(id => fetchEtas(id).catch(() => null)));
+  const results = [];
+  for (let start = 0; start < stopIds.length; start += 10) {
+    const chunk = stopIds.slice(start, start + 10);
+    try {
+      const list = await apiFetch(`/v1/stops/etas?stop_ids=${chunk.map(encodeURIComponent).join(",")}`);
+      const byId = new Map(list.map(d => { rememberStopFromEtas(d); return [d.stop_id, d]; }));
+      results.push(...chunk.map(id => byId.get(id) ?? null));
+    } catch (err) {
+      if (err.status === 404 || err.status === 405 || err.status === 422) {
+        results.push(...await Promise.all(chunk.map(id => fetchEtas(id).catch(() => null))));
+      } else {
+        results.push(...chunk.map(() => null));
+      }
+    }
   }
+  return results;
 }
 function setOffline(on) {
   S.offline = on;
@@ -757,7 +765,8 @@ function renderHomeBody(opts = {}) {
     return;
   }
   const label = S.loc?.label || "";
-  const head = `<div class="sec-head"><h2>Bus stops near ${S.loc?.gps ? "you" : "here"}</h2><span class="meta">${esc(label)}${label ? " · " : ""}updated <span data-ago="${S.nearbyAt}">${ago(S.nearbyAt)}</span></span></div>`;
+  const freshness = S.nearbyAt ? `updated <span data-ago="${S.nearbyAt}">${ago(S.nearbyAt)}</span>` : "";
+  const head = `<div class="sec-head"><h2>Bus stops near ${S.loc?.gps ? "you" : "here"}</h2><span class="meta">${esc(label)}${label && freshness ? " · " : ""}${freshness}</span></div>`;
   if (S.nearby.length === 0) {
     body.innerHTML = head + `<div class="panel dashed">${I.empty}
       <div class="ptitle">No stops within 1 km</div>
@@ -790,24 +799,56 @@ function arrivalChip(it) {
   return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}">${esc(fmtArrival(it))}</span></div>`;
 }
 let nearbySeq = 0;
+let nearbyAtKey = null;
+const NEARBY_CACHE_TTL_MS = 5 * 60 * 1000;
+const NEARBY_CACHE_MAX_ENTRIES = 8;
+const nearbyLookupCache = new Map();
+const nearbyLookupPending = new Map();
+function nearbyLookupKey(loc) {
+  return `${loc.lat}|${loc.lon}|${NEARBY_RADIUS_M}|${NEARBY_LIMIT}`;
+}
+async function nearbyStopsFor(loc, seq) {
+  const key = nearbyLookupKey(loc);
+  const cached = nearbyLookupCache.get(key);
+  if (cached && Date.now() - cached.at < NEARBY_CACHE_TTL_MS) return cached.stops;
+  let request = nearbyLookupPending.get(key);
+  if (!request) {
+    request = apiFetch(`/v1/stops/nearby?lat=${loc.lat}&lon=${loc.lon}&radius_m=${NEARBY_RADIUS_M}&limit=${NEARBY_LIMIT}`);
+    nearbyLookupPending.set(key, request);
+  }
+  let stops;
+  try { stops = await request; }
+  finally { if (nearbyLookupPending.get(key) === request) nearbyLookupPending.delete(key); }
+  if (seq === nearbySeq && S.loc && nearbyLookupKey(S.loc) === key) {
+    nearbyLookupCache.delete(key);
+    nearbyLookupCache.set(key, { stops, at: Date.now() });
+    while (nearbyLookupCache.size > NEARBY_CACHE_MAX_ENTRIES) nearbyLookupCache.delete(nearbyLookupCache.keys().next().value);
+  }
+  return stops;
+}
 async function loadNearby(silent) {
   if (!S.loc) return;
+  const loc = { ...S.loc };
+  const locKey = nearbyLookupKey(loc);
+  if (nearbyAtKey !== locKey) { S.nearbyAt = 0; nearbyAtKey = locKey; }
   const seq = ++nearbySeq;
   S.lastLoadAt = Date.now();
   if (!map) drawMap(); // show the map as soon as location is known, before stop data arrives
   if (!silent || !S.nearby) renderHomeBody({ loading: true });
   let stops;
   try {
-    stops = await apiFetch(`/v1/stops/nearby?lat=${S.loc.lat}&lon=${S.loc.lon}&radius_m=${NEARBY_RADIUS_M}&limit=${NEARBY_LIMIT}`);
+    stops = await nearbyStopsFor(loc, seq);
   } catch {
     if (seq === nearbySeq && S.view === "home") renderHomeBody();
     return;
   }
+  if (seq !== nearbySeq || !S.loc || nearbyLookupKey(S.loc) !== nearbyLookupKey(loc)) return;
   stops.forEach(rememberStop);
   const etas = await fetchEtasMany(stops.map(s => s.stop_id));
-  if (seq !== nearbySeq) return;
-  S.nearby = stops.map((stop, i) => ({ stop, eta: etas[i] }));
-  S.nearbyAt = Date.now();
+  if (seq !== nearbySeq || !S.loc || nearbyLookupKey(S.loc) !== nearbyLookupKey(loc)) return;
+  const previousEtas = new Map((S.nearby || []).map(({ stop, eta }) => [stop.stop_id, eta]));
+  S.nearby = stops.map((stop, i) => ({ stop, eta: etas[i] ?? previousEtas.get(stop.stop_id) ?? null }));
+  if (etas.every(eta => eta !== null)) { S.nearbyAt = Date.now(); nearbyAtKey = locKey; }
   if (S.view === "home") { renderHomeBody(); drawMap(); }
 }
 
@@ -1265,10 +1306,17 @@ function renderSaved() {
   drawSaved();
   if (S.saved.length) loadSaved();
 }
+let savedLoadSeq = 0;
 async function loadSaved() {
   S.lastLoadAt = Date.now();
-  const results = await Promise.all(S.saved.map(id => fetchEtas(id).catch(() => savedState.etas[id] ?? null)));
-  S.saved.forEach((id, i) => { savedState.etas[id] = results[i]; });
+  const seq = ++savedLoadSeq;
+  const ids = [...S.saved];
+  const results = await fetchEtasMany(ids);
+  if (seq !== savedLoadSeq) return;
+  ids.forEach((id, i) => {
+    if (results[i] !== null) savedState.etas[id] = results[i];
+    else if (!(id in savedState.etas)) savedState.etas[id] = null;
+  });
   if (S.view === "saved") drawSaved();
 }
 let savedReorder = false; // drag handles shown only while true (Reorder button)
