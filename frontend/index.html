@@ -1612,11 +1612,9 @@ async function showWalkRoute() {
   renderWalkBar();
   let route = null, error = null;
   try {
-    if (!S.loc) {
-      const pos = await getLocation();
-      S.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Your location", gps: true };
-    }
+    const pos = await getLocation();
     if (request !== walkState.request || stopState.id !== id) return;
+    S.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Your location", gps: true };
     const q = new URLSearchParams({ from_lat: S.loc.lat, from_lon: S.loc.lon, to_lat: c.lat, to_lon: c.lon });
     const res = await fetch(`${API_BASE}/v1/walk?${q}`);
     if (res.status === 503) error = "Walking route not available right now";

@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 function setup() {
   const elements = Object.fromEntries(['#walk-bar','#walk-text','#walk-btn','#walk-maps','#walk-directions'].map(id => [id,{hidden:false,innerHTML:'',textContent:''}]));
-  const ctx = vm.createContext({$:id=>elements[id], stopState:{id:'s1',mode:'map'}, S:{view:'stop',loc:{lat:3.15,lon:101.7}}, stopCoords:()=>({lat:3.16,lon:101.71}),stopDisplay:()=>({name:'LRT Station'}), fmtDist:d=>`${d} m`,URLSearchParams,API_BASE:'',window:{},stopMap:null,fitFillCards(){}});
+  const ctx = vm.createContext({$:id=>elements[id], stopState:{id:'s1',mode:'map'}, S:{view:'stop',loc:{lat:3.15,lon:101.7}}, stopCoords:()=>({lat:3.16,lon:101.71}),stopDisplay:()=>({name:'LRT Station'}), fmtDist:d=>`${d} m`,URLSearchParams,API_BASE:'',window:{},stopMap:null,fitFillCards(){},getLocation:async()=>({coords:{latitude:3.15,longitude:101.7}})});
   vm.runInContext(html.slice(html.indexOf('function esc(str)'),html.indexOf('\n}',html.indexOf('function esc(str)'))+2),ctx);
   vm.runInContext(html.slice(html.indexOf('const walkState ='),html.indexOf('view.addEventListener("pointerup"')),ctx);
   const run = source=>vm.runInContext(source,ctx);
@@ -41,9 +41,11 @@ test('geometry-only responses keep a useful Maps fallback and do not invent turn
 
 test('a delayed route for a previous stop cannot replace the current walking directions',async()=>{
   const {ctx,run,elements} = setup();
-  let finish;
-  ctx.fetch=()=>new Promise(resolve=>{finish=resolve;});
+  let finish, markStarted;
+  const started = new Promise(resolve=>{markStarted=resolve;});
+  ctx.fetch=()=>new Promise(resolve=>{finish=resolve;markStarted();});
   const previous=run('showWalkRoute()');
+  await started;
   run('stopState.id="s2"; walkState.request++; walkState.busy=false; walkState.route=null');
   ctx.route.steps[0].instruction='Start at the new stop';
   ctx.fetch=async()=>({ok:true,status:200,json:async()=>ctx.route});
@@ -52,4 +54,43 @@ test('a delayed route for a previous stop cannot replace the current walking dir
   await previous;
   assert.match(elements['#walk-directions'].innerHTML,/Start at the new stop/);
   assert.doesNotMatch(elements['#walk-directions'].innerHTML,/Old stop/);
+});
+
+
+test('Show walk uses fresh GPS instead of a previously searched location',async()=>{
+  const {ctx,run} = setup();
+  ctx.S.loc={lat:4,lon:102,gps:false,label:'Previously searched place'};
+  ctx.getLocation=async()=>({coords:{latitude:3.18,longitude:101.72}});
+  let requested;
+  ctx.fetch=async url=>{requested=new URL(url,'https://example.test');return {ok:true,status:200,json:async()=>ctx.route};};
+  await run('showWalkRoute()');
+  assert.equal(requested.searchParams.get('from_lat'),'3.18');
+  assert.equal(requested.searchParams.get('from_lon'),'101.72');
+});
+
+test('a delayed GPS result cannot replace the location for a newer stop',async()=>{
+  const {ctx,run} = setup();
+  let finish;
+  ctx.S.loc=null;
+  ctx.getLocation=()=>new Promise(resolve=>{finish=resolve;});
+  const old=run('showWalkRoute()');
+  run('stopState.id="s2"; walkState.request++; walkState.busy=false');
+  ctx.S.loc={lat:3.3,lon:101.8,label:'New location'};
+  finish({coords:{latitude:3.1,longitude:101.6}});
+  await old;
+  assert.equal(ctx.S.loc.lat,3.3);
+  assert.equal(ctx.S.loc.label,'New location');
+});
+
+
+test('location denial shows a retry message and does not route from cached coordinates',async()=>{
+  const {ctx,run,elements} = setup();
+  let requests=0;
+  ctx.getLocation=async()=>{throw {code:1};};
+  ctx.fetch=async()=>{requests++;};
+  await run('showWalkRoute()');
+  assert.equal(requests,0);
+  assert.match(elements['#walk-text'].textContent,/Allow location/);
+  assert.equal(elements['#walk-directions'].hidden,true);
+  assert.equal(elements['#walk-btn'].hidden,false);
 });
