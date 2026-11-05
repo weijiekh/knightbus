@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 function setup() {
   const elements = Object.fromEntries(['#walk-bar','#walk-text','#walk-btn','#walk-maps','#walk-directions'].map(id => [id,{hidden:false,innerHTML:'',textContent:''}]));
-  const ctx = vm.createContext({$:id=>elements[id], stopState:{id:'s1',mode:'map'}, S:{view:'stop',loc:{lat:3.15,lon:101.7}}, stopCoords:()=>({lat:3.16,lon:101.71}),stopDisplay:()=>({name:'LRT Station'}), fmtDist:d=>`${d} m`,URLSearchParams,API_BASE:'',window:{},stopMap:null,fitFillCards(){},getLocation:async()=>({coords:{latitude:3.15,longitude:101.7}})});
+  const ctx = vm.createContext({$:id=>elements[id], stopState:{id:'s1',mode:'map'}, S:{view:'stop',loc:{lat:3.15,lon:101.7}}, stopCoords:()=>({lat:3.16,lon:101.71}),stopDisplay:()=>({name:'LRT Station'}), fmtDist:d=>`${d} m`,URLSearchParams,API_BASE:'',window:{},stopMap:null,fitFillCards(){},renderLiveWalkingPanel(){},drawWalkingPosition(){},endWalkingNavigation(){},getLocation:async()=>({coords:{latitude:3.15,longitude:101.7}})});
   vm.runInContext(html.slice(html.indexOf('function esc(str)'),html.indexOf('\n}',html.indexOf('function esc(str)'))+2),ctx);
   vm.runInContext(html.slice(html.indexOf('const walkState ='),html.indexOf('view.addEventListener("pointerup"')),ctx);
   const run = source=>vm.runInContext(source,ctx);
@@ -93,4 +93,19 @@ test('location denial shows a retry message and does not route from cached coord
   assert.match(elements['#walk-text'].textContent,/Allow location/);
   assert.equal(elements['#walk-directions'].hidden,true);
   assert.equal(elements['#walk-btn'].hidden,false);
+});
+
+
+test('arrival refreshes retain the expanded walking instruction DOM for the same route',async()=>{
+  const {run,elements}=setup();
+  await run('showWalkRoute()');
+  const panel=elements['#walk-directions'];
+  let writes=0;
+  let content=panel.innerHTML;
+  Object.defineProperty(panel,'innerHTML',{get:()=>content,set:value=>{writes++;content=value;}});
+  run('renderWalkBar()');
+  assert.equal(writes,0);
+  run('stopState.mode="list"; renderWalkBar()');
+  assert.equal(panel.hidden,true);
+  assert.equal(content,'');
 });

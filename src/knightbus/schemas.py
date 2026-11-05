@@ -90,6 +90,7 @@ class WalkStep(BaseModel):
     instruction: str = Field(min_length=1)
     distance_m: float = Field(ge=0, allow_inf_nan=False)
     type: int | None = None
+    way_points: tuple[int, int] | None = None
 
 
 class WalkRouteResponse(BaseModel):

@@ -103,7 +103,7 @@ def test_walk_endpoint_returns_ordered_turn_instructions(monkeypatch) -> None:
     _configure(monkeypatch)
     payload = deepcopy(PAYLOAD)
     payload["features"][0]["properties"]["segments"] = [
-        {"steps": [{"instruction": "Head north on Jalan SS 2", "distance": 120, "type": 11}]},
+        {"steps": [{"instruction": "Head north on Jalan SS 2", "distance": 120, "type": 11, "way_points": [0, 1]}]},
         {"steps": [
             {"instruction": "Turn left onto the footpath", "distance": 30, "type": 0},
             {"instruction": "Arrive at your destination", "distance": 0, "type": 10},
@@ -114,9 +114,9 @@ def test_walk_endpoint_returns_ordered_turn_instructions(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["steps"] == [
-        {"instruction": "Head north on Jalan SS 2", "distance_m": 120, "type": 11},
-        {"instruction": "Turn left onto the footpath", "distance_m": 30, "type": 0},
-        {"instruction": "Arrive at your destination", "distance_m": 0, "type": 10},
+        {"instruction": "Head north on Jalan SS 2", "distance_m": 120, "type": 11, "way_points": [0, 1]},
+        {"instruction": "Turn left onto the footpath", "distance_m": 30, "type": 0, "way_points": None},
+        {"instruction": "Arrive at your destination", "distance_m": 0, "type": 10, "way_points": None},
     ]
 
 
@@ -130,3 +130,16 @@ def test_bad_instructions_preserve_usable_map_route(segments) -> None:
     assert route.steps == []
     assert route.distance_m == 512.4
     assert route.geometry == [[3.15, 101.7], [3.151, 101.71]]
+
+
+@pytest.mark.parametrize("indices", [[-1, 1], [0, 50], [1, 0], [0], [0.5, 1], [False, 1], None])
+def test_invalid_way_points_preserve_instruction_without_navigation_mapping(indices) -> None:
+    from copy import deepcopy
+
+    payload = deepcopy(PAYLOAD)
+    payload["features"][0]["properties"]["segments"] = [{"steps": [
+        {"instruction": "Turn left", "distance": 12, "type": 0, "way_points": indices},
+    ]}]
+    step = walking.parse_ors_geojson(payload).steps[0]
+    assert step.instruction == "Turn left"
+    assert step.way_points is None

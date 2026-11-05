@@ -20,7 +20,7 @@ function context(now = Date.now()) {
     clock: value => `clock:${value}`, clockFmt: { format: value => value.toISOString().slice(11, 16) },
     routeLabel: item => item.route_short_name || "—", titleCase: String,
     routeBadgeLink: () => '<span class="route-badge">190</span>', delayBadge: () => "",
-    S: { routeMeta: {} },
+    S: { routeMeta: {} }, checkWalkingGPS() {},
   });
   vm.runInContext(section("function minutesOf(item)", "function klMinutesOfDay"), ctx);
   vm.runInContext(section("const LIVE_EVIDENCE_MAX_AGE_MS", "function routeLabel"), ctx);

@@ -56,7 +56,10 @@ def parse_ors_geojson(payload: dict) -> WalkRoute:
         # instruction list must not prevent displaying an otherwise usable route.
         try:
             steps = [
-                WalkStep(instruction=step["instruction"].strip(), distance_m=step["distance"], type=step.get("type"))
+                WalkStep(
+                    instruction=step["instruction"].strip(), distance_m=step["distance"], type=step.get("type"),
+                    way_points=_step_way_points(step.get("way_points"), len(geometry)),
+                )
                 for segment in feature["properties"].get("segments", [])
                 for step in segment.get("steps", [])
             ]
@@ -70,6 +73,15 @@ def parse_ors_geojson(payload: dict) -> WalkRoute:
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise WalkingError("unexpected routing response") from exc
+
+
+def _step_way_points(value: object, geometry_size: int) -> tuple[int, int] | None:
+    """Keep instructions usable when the provider omits or corrupts indices."""
+    if (isinstance(value, (list, tuple)) and len(value) == 2
+            and all(type(index) is int for index in value)
+            and 0 <= value[0] <= value[1] < geometry_size):
+        return value[0], value[1]
+    return None
 
 
 def walking_route(from_lat: float, from_lon: float, to_lat: float, to_lon: float) -> WalkRoute:

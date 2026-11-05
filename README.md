@@ -240,6 +240,16 @@ Production frontend is on Cloudflare Pages, which proxies `/v1/*` to the API. Se
 | GET | `/v1/routes/{route_id}/vehicles` | Live vehicle positions for a route |
 | GET | `/v1/models/current` | Current ML model version and status |
 
+## Live walking navigation
+
+Open a stop, choose **Map → Show walk**, then **Start live navigation**. The map follows your GPS position and shows the current instruction, approaching turns, and estimated remaining distance/time. Drag the map to explore; tap **Recenter** to follow your position again. The app confirms arrival only after sustained accurate GPS readings near the stop and route endpoint.
+
+Live guidance requires location permission and HTTPS (localhost also works). Keep the page open: guidance pauses while it is hidden and waits for fresh GPS when you return. **End navigation**, switching to the stop list, or leaving the stop releases the GPS watch. Opening Maps remains available as a fallback.
+
+Inaccurate or stale GPS pauses turn updates. Rerouting requires at least five seconds of consecutive off-route readings and is limited to one request every 30 seconds. GPS progress runs in the browser; only initial routes and reroutes call `/v1/walk`. Locations are kept in memory. `ORS_API_KEY` is required on the backend, as for **Show walk**.
+
+The walking response includes `steps[].way_points`, the start/end indices into `geometry`. When indices are missing or invalid, the route can still be tracked on the map, but automatic turn instructions are unavailable. Deploy the API extension before or alongside the frontend.
+
 ## Prasarana feed defaults
 
 The default `.env.example` configures three Prasarana feeds:
