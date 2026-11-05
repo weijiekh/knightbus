@@ -1512,15 +1512,16 @@ view.addEventListener("keydown", e => {
 let routeSearchController = null;
 let routeSearchTimer = null;
 function routeResultCard(r) {
-  return `<a class="row-card" href="#/route/${encodeURIComponent(r.route_id)}"><span class="route-badge sm">${esc(r.short_name || r.route_id)}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")) || "Route " + (r.short_name || r.route_id))}</div></div>${I.chev}</a>`;
+  return `<a class="row-card" href="#/route/${encodeURIComponent(r.route_id)}"><span class="route-badge sm">${esc(r.short_name || "Bus")}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")) || "Bus route")}</div></div>${I.chev}</a>`;
 }
 function renderRoutes() {
   const routes = S.recent.filter(r => r.kind === "route");
   view.innerHTML = `<h1 class="page-title">Routes</h1><p class="page-sub">Find your route and follow its buses live.</p>
     <div class="search-row"><div class="field">${I.search}<label for="route-query" class="sr-only">Search routes by number or destination</label><input id="route-query" type="search" placeholder="Route number or destination" autocomplete="off" maxlength="64"></div></div>
     <div id="route-results" aria-live="polite"></div>
-    <div id="recent-routes">${routes.length ? `<div class="sec-head"><h2>Recently viewed</h2></div><div class="list">${routes.map(r => routeResultCard({ route_id: r.id, short_name: r.label, long_name: r.long_name })).join("")}</div>`
+    <div id="recent-routes">${routes.length ? `<div class="sec-head"><h2>Recently viewed</h2></div><div class="list">${routes.map(r => routeResultCard({ route_id: r.id, short_name: r.label === r.id ? null : r.label, long_name: r.long_name })).join("")}</div>`
     : `<div class="panel dashed">${I.busLine}<div class="ptitle">Where are you heading?</div><div class="psub">Search a route number like 190 or a destination. Routes you open will appear here.</div></div>`}</div>`;
+  loadRecentRouteNames(routes);
   $("#route-query").addEventListener("input", e => {
     clearTimeout(routeSearchTimer);
     routeSearchController?.abort();
@@ -1529,6 +1530,19 @@ function renderRoutes() {
     $("#route-results").innerHTML = q ? `<p class="quiet" style="padding:0 20px">${q.length < 2 ? "Enter at least 2 characters to find a route." : "Searching routes…"}</p>` : "";
     if (q.length >= 2) routeSearchTimer = setTimeout(() => searchRoutes(q), 250);
   });
+}
+async function loadRecentRouteNames(routes) {
+  await Promise.all(routes.map(async recent => {
+    try {
+      const meta = await apiFetch(`/v1/routes/${encodeURIComponent(recent.id)}`);
+      S.routeMeta[recent.id] = meta;
+      recent.label = meta.short_name || "Bus";
+      recent.long_name = meta.long_name;
+    } catch { /* Keep the last known names when offline. */ }
+  }));
+  if (S.view !== "routes" || !routes.length || !$("#recent-routes")) return;
+  save("kb-recent", S.recent);
+  $("#recent-routes").innerHTML = `<div class="sec-head"><h2>Recently viewed</h2></div><div class="list">${routes.map(r => routeResultCard(S.routeMeta[r.id] || { route_id: r.id, short_name: r.label === r.id ? null : r.label, long_name: r.long_name })).join("")}</div>`;
 }
 async function searchRoutes(q) {
   const controller = new AbortController();
