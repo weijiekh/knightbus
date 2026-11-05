@@ -269,7 +269,9 @@ a.route-badge { text-decoration: none; }
 .trip-eta { font-size: 30px; font-weight: 700; color: var(--accent); }
 .trip-eta span { font-size: 13px; font-weight: 400; color: var(--text2); }
 .trip-buses a { font-size: 13px; }
-.bus-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.bus-choices { display: flex; flex-wrap: wrap; gap: 8px; max-height: 180px; overflow: auto; }
+.trip-passed summary { min-height: 44px; padding: 12px 0; cursor: pointer; color: var(--text2); font-size: 13px; }
+.trip-passed .trip-row { margin-bottom: 10px; }
 .bus-choice { text-align: left; padding: 10px 14px; min-height: 56px; border: 1px solid var(--border2); border-radius: 12px; background: var(--surface2); }
 .bus-choice[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-dim); }
 .bus-choice small { display: block; color: var(--text2); font-size: 11px; margin-top: 3px; }
@@ -1211,13 +1213,13 @@ function openRecent(r) {
 
 // ══════════ LIVE TRIP ══════════
 // The legacy stop segment stays valid, but GPS alone determines progress.
-const tripState = { id: null, data: null, error: false, selected: null, request: 0 };
+const tripState = { id: null, data: null, error: false, selected: null, request: 0, passedOpen: false };
 function tripBusHref(tripId, stopId, vehicleId) {
   return `#/trip/${encodeURIComponent(tripId)}/${encodeURIComponent(stopId || "live")}/${encodeURIComponent(vehicleId)}`;
 }
 function renderTrip({ tripId, vehicleId }) {
   tripState.id = tripId; tripState.data = null; tripState.error = false;
-  tripState.selected = vehicleId || null;
+  tripState.selected = vehicleId || null; tripState.passedOpen = false;
   view.innerHTML = `<div class="bar"><button type="button" class="icon-btn ghost" aria-label="Back" onclick="goBack()">${I.back}</button><div class="grow"></div><button type="button" class="icon-btn ghost" aria-label="Refresh bus progress" onclick="refreshView(true)">${I.refresh}</button></div>
     <div class="stop-head"><div class="code" id="trip-code">Live journey</div><h1 id="trip-title">Follow this bus</h1></div>
     <div id="trip-body"><div class="skel" role="status" aria-label="Loading live journey"><div></div><div></div><div></div></div></div>`;
@@ -1254,7 +1256,7 @@ function renderTripBody(stopId) {
   }
   const buses = (data.buses || []).filter(b => !busStale(b));
   // Retain the rider's choice if GPS disappears; never silently follow another bus.
-  if (!tripState.selected && buses.length) tripState.selected = (buses.find(b => b.trip_id === data.trip_id) || buses[0]).vehicle_id;
+  if (!tripState.selected && buses.length) tripState.selected = buses.find(b => b.trip_id === data.trip_id)?.vehicle_id || null;
   const bus = buses.find(b => b.vehicle_id === tripState.selected);
   const idx = bus ? stops.findIndex(s => s.stop_sequence === bus.current_stop_sequence) : -1;
   const nm = s => titleCase(s.stop_name || s.stop_code || "Unnamed stop");
@@ -1271,7 +1273,7 @@ function renderTripBody(stopId) {
       <div class="next-name">${fresh ? esc(next ? nm(next) : nm(stops[idx])) : "Your bus will appear here"}</div>
       ${fresh ? `<div class="trip-eta">${nextTime ? esc(tripEta(nextTime)) + ' <span>estimated arrival</span>' : next ? '<span>ETA unavailable</span>' : '<span>Final stop</span>'}</div><div class="now-line">Now · near ${esc(nm(stops[idx]))}</div><div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${stops.length}" aria-valuenow="${idx + 1}" aria-label="Live trip progress"><div style="width:${Math.round((idx + 1) / stops.length * 100)}%"></div></div>` : `<div class="psub">${tripState.selected ? `Bus ${esc(tripState.selected)} has no fresh, matched position.` : "No bus is reporting a fresh position for this journey."} Stop progress and arrival times will resume automatically.</div>`}
     </div>
-    <div class="panel trip-buses"><div class="ptitle">${buses.length} live bus${buses.length === 1 ? "" : "es"} · this direction</div><div class="psub">On board? Choose your bus by its vehicle ID. Each bus follows the same stops.</div>
+    <div class="panel trip-buses"><div class="ptitle">${buses.length} live bus${buses.length === 1 ? "" : "es"} · this journey</div><div class="psub">On board? Choose your bus by its vehicle ID. Each bus follows the same stops.</div>
       <div class="bus-choices" role="group" aria-label="Choose the bus you are on">${buses.map((b, i) => `<button type="button" class="bus-choice" data-trip-bus="${i}" aria-pressed="${b.vehicle_id === tripState.selected}"><span>Bus ${esc(b.vehicle_id)}</span><small>${b.vehicle_id === tripState.selected ? "Following" : "Follow this bus"}</small></button>`).join("")}</div>
       ${data.route_id ? `<a href="#/route/${encodeURIComponent(data.route_id)}">View all buses on this route →</a>` : ""}
     </div>
@@ -1282,7 +1284,7 @@ function renderTripBody(stopId) {
       const time = fresh && i > idx ? bus.arrivals[s.stop_sequence] : null;
       // Only buses behind this one on the same pattern count as a following bus.
       const following = fresh && i >= idx ? buses.filter(b => b.vehicle_id !== bus.vehicle_id && b.current_stop_sequence != null && b.current_stop_sequence <= bus.current_stop_sequence && b.arrivals[s.stop_sequence] && (!time || Date.parse(b.arrivals[s.stop_sequence]) > Date.parse(time))).sort((a, b) => Date.parse(a.arrivals[s.stop_sequence]) - Date.parse(b.arrivals[s.stop_sequence]))[0] : null;
-      return `<div class="row-card trip-row${now ? " current" : ""}${passed ? " done" : ""}"${now ? ' aria-current="step"' : ""}>
+      return `${fresh && idx > 0 && i === 0 ? `<details class="trip-passed" ontoggle="tripState.passedOpen=this.open"${tripState.passedOpen ? " open" : ""}><summary>${idx} stop${idx === 1 ? "" : "s"} passed</summary>` : ""}${fresh && idx > 0 && i === idx ? "</details>" : ""}<div class="row-card trip-row${now ? " current" : ""}${passed ? " done" : ""}"${now ? ' aria-current="step"' : ""}>
         <span class="num${now ? " first" : ""}" aria-hidden="true">${passed ? "✓" : i + 1}</span>
         <div class="grow"><div class="title">${esc(nm(s))}</div><div class="sub">${passed ? "Passed" : now ? "Now · near this stop" : i === stops.length - 1 ? "Final stop" : "Upcoming"}${s.stop_code ? ` · ${esc(s.stop_code)}` : ""}</div>
         ${following ? `<div class="next-bus">Next bus here · ${esc(tripEta(following.arrivals[s.stop_sequence]))} <span>· Bus ${esc(following.vehicle_id)}</span></div>` : fresh && i >= idx ? '<div class="sub">Next bus here · not available</div>' : ""}</div>
@@ -1711,14 +1713,14 @@ function drawRoute() {
     const seen = Date.parse(x.observed_at);
     const stop = x.stop_id ? { ...stopDisplay(x.stop_id), ...(x.stop_name ? { name: titleCase(x.stop_name) } : {}) } : null;
     const locate = x.lat != null && x.lon != null ? `<button type="button" data-locate-bus="${index}">Show on map</button>` : "";
-    const follow = x.trip_id && x.stop_id ? `<a href="#/trip/${encodeURIComponent(x.trip_id)}/${encodeURIComponent(x.stop_id)}/${encodeURIComponent(x.vehicle_id)}">Follow this bus →</a>` : "";
+    const follow = x.trip_id ? `<a href="#/trip/${encodeURIComponent(x.trip_id)}/${encodeURIComponent(x.stop_id || "live")}/${encodeURIComponent(x.vehicle_id)}">Follow this bus →</a>` : "";
     return `<div class="row-card bus-row${routeState.selected === x.vehicle_id ? " selected" : ""}"><div style="display:flex;align-items:center;gap:12px"><span class="res-ico bus-label">${esc(busLabel(x))}</span>
       <div class="grow"><div class="title">${stop ? `Near ${esc(stop.name)}` : `Bus ${esc(x.vehicle_id)}`}</div>
       <div class="sub">${x.headsign ? `To ${esc(titleCase(x.headsign))} · ` : ""}Bus <span class="mono">${esc(x.vehicle_id)}</span>${busStale(x) ? " · Older GPS" : ""} · seen <span data-ago="${seen}">${ago(seen)}</span></div></div></div>
       ${stop || follow || locate ? `<div class="links">${locate}${stop ? `<a href="#/stop/${encodeURIComponent(x.stop_id)}">Arrivals at this stop</a>` : ""}${follow}</div>` : ""}</div>`;
   }).join("");
   const selected = v.find(x => x.vehicle_id === routeState.selected);
-  $("#selected-bus").innerHTML = selected ? `<div class="panel"><div class="ptitle">${esc(busLabel(selected))} · Bus ${esc(selected.vehicle_id)}</div><div class="psub">${selected.headsign ? `To ${esc(titleCase(selected.headsign))} · ` : ""}${selected.stop_name ? `Near ${esc(titleCase(selected.stop_name))}` : "Nearest stop unavailable"}<br>${busStale(selected) ? "Older GPS · " : ""}Last seen <span data-ago="${Date.parse(selected.observed_at)}">${ago(Date.parse(selected.observed_at))}</span></div>${selected.trip_id && selected.stop_id ? `<a class="btn out" href="#/trip/${encodeURIComponent(selected.trip_id)}/${encodeURIComponent(selected.stop_id)}/${encodeURIComponent(selected.vehicle_id)}">Follow this bus</a>` : ""}</div>` : "";
+  $("#selected-bus").innerHTML = selected ? `<div class="panel"><div class="ptitle">${esc(busLabel(selected))} · Bus ${esc(selected.vehicle_id)}</div><div class="psub">${selected.headsign ? `To ${esc(titleCase(selected.headsign))} · ` : ""}${selected.stop_name ? `Near ${esc(titleCase(selected.stop_name))}` : "Nearest stop unavailable"}<br>${busStale(selected) ? "Older GPS · " : ""}Last seen <span data-ago="${Date.parse(selected.observed_at)}">${ago(Date.parse(selected.observed_at))}</span></div>${selected.trip_id ? `<a class="btn out" href="#/trip/${encodeURIComponent(selected.trip_id)}/${encodeURIComponent(selected.stop_id || "live")}/${encodeURIComponent(selected.vehicle_id)}">Follow this bus</a>` : ""}</div>` : "";
   const mapCard = $("#route-map").closest(".route-map-card");
   mapCard.classList.toggle("expanded", routeState.expanded);
   const expand = $("#route-map-expand");

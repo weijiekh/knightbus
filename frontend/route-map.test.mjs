@@ -99,6 +99,13 @@ test('delayed map initialization ignores superseded renders', () => {
   assert.match(markers()[0].options.title, /Bus new/);
 });
 
+test('a bus with a trip but no matched stop can still be followed by vehicle ID', () => {
+  const {ctx, run, $} = setup();
+  ctx.buses = [{vehicle_id:'bus 1',trip_id:'trip',current_stop_sequence:2,observed_at:new Date().toISOString()}];
+  run('routeState.vehicles = buses; drawRoute()');
+  assert.match($('#route-list').innerHTML, /href="#\/trip\/trip\/live\/bus%201"/);
+});
+
 test('direct route links resolve public names without cached search metadata', async () => {
   const {ctx, run, $} = setup();
   const recents = [];

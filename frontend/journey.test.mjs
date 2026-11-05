@@ -58,3 +58,11 @@ test('out-of-order journey responses cannot overwrite newer refresh results', as
   await first;
   assert.equal(run('tripState.data.headsign'),'New');
 });
+
+test('legacy trip links wait for their own bus instead of choosing a different trip', () => {
+  const {run,body} = setup();
+  run('tripState.selected = null; data.buses.shift(); renderTripBody()');
+  assert.equal(run('tripState.selected'), null);
+  assert.match(body.innerHTML,/Waiting for live GPS/);
+  assert.match(body.innerHTML,/Bus next/);
+});
