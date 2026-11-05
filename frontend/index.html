@@ -111,6 +111,12 @@ a { color: var(--accent); }
 .walk-bar button, .walk-bar a { flex: none; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; text-decoration: none; cursor: pointer; }
 .walk-steps { list-style: none; }
 .walk-steps li { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); line-height: 1.45; }
+.walk-guidance { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--border-live); border-radius: 14px; background: var(--accent-dim); }
+.walk-instruction { font-size: 19px; font-weight: 700; line-height: 1.35; margin-bottom: 6px; overflow-wrap: anywhere; }
+.walk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.walk-actions .btn { min-height: 44px; }
+.walk-all summary { min-height: 44px; padding: 12px 0; cursor: pointer; font-weight: 600; font-size: 14px; }
+.walk-current { background: var(--accent-dim); border-radius: 12px; }
 .walk-steps li:last-child { border-bottom: 0; padding-bottom: 0; }
 .walk-turn { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--accent-dim); color: var(--accent); font-size: 22px; }
 .walk-steps .instruction { font-size: 14px; overflow-wrap: anywhere; }
@@ -345,6 +351,8 @@ nav.tabs a[aria-current="page"] { color: var(--accent); }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
   integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
+<script src="/walking-navigation.js"></script>
+<script src="/walking-live.js"></script>
 <script>
 // API is same-origin: nginx locally, Pages Function (functions/v1) on Cloudflare Pages
 const API_BASE = "";
@@ -653,7 +661,11 @@ let currentRoute = null;
 function route() {
   clearTimeout(routeSearchTimer);
   routeSearchController?.abort();
-  currentRoute = parseHash();
+  const nextRoute = parseHash();
+  if (currentRoute?.name === "stop" && (nextRoute.name !== "stop" || nextRoute.id !== currentRoute.id)) {
+    endWalkingNavigation(false); walkState.request++; walkState.busy = false;
+  }
+  currentRoute = nextRoute;
   S.view = currentRoute.name;
   const tab = { home: "nearby", stop: "nearby", trip: "nearby", search: "nearby", saved: "saved", routes: "routes", route: "routes" }[S.view];
   document.querySelectorAll("nav.tabs a").forEach(a => a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
@@ -686,6 +698,7 @@ function rerenderCurrentData() {
 }
 setInterval(() => {
   if (document.visibilityState !== "visible") return;
+  checkWalkingGPS();
   let needsRender = false;
   document.querySelectorAll("[data-ago]").forEach(el => { el.textContent = ago(Number(el.dataset.ago)); });
   document.querySelectorAll("[data-countdown]").forEach(el => {
@@ -718,6 +731,7 @@ setInterval(() => {
       && S.lastLoadAt && Date.now() - S.lastLoadAt >= REFRESH_SECS * 1000) refreshView();
 }, 1000);
 document.addEventListener("visibilitychange", () => {
+  walkingVisibilityChanged();
   if (document.visibilityState === "visible" && S.lastLoadAt && Date.now() - S.lastLoadAt >= REFRESH_SECS * 1000) refreshView();
 });
 
@@ -821,6 +835,7 @@ function fitFillCards() {
   if (stopMap) stopMap.invalidateSize();
 }
 window.addEventListener("resize", fitFillCards);
+window.addEventListener("pagehide", () => endWalkingNavigation(false));
 function renderHomeBody(opts = {}) {
   const body = $("#home-body");
   if (!body) return;
@@ -976,7 +991,7 @@ function drawMap() {
 const stopState = { id: null, data: null, showAll: false, at: 0, mode: "list" };
 // Stop map: list/map toggle. Coordinates come from the ETA response or stored stop metadata.
 let stopMap = null, stopMapId = null;
-function destroyStopMap() { if (stopMap) { stopMap.remove(); stopMap = null; stopMapId = null; } }
+function destroyStopMap() { if (stopMap) { stopMap.remove(); stopMap = null; stopMapId = null; } walkUserMarker = null; walkAccuracyLayer = null; walkLayer = null; }
 function stopCoords(id) {
   const d = stopState.data;
   if (d?.lat != null && d?.lon != null) return { lat: d.lat, lon: d.lon };
@@ -984,6 +999,7 @@ function stopCoords(id) {
   return m?.lat != null ? { lat: m.lat, lon: m.lon } : null;
 }
 function setStopView(mode) {
+  if (mode !== "map" && walkNav.active) endWalkingNavigation(false);
   stopState.mode = mode;
   document.querySelectorAll("[data-sv]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.sv === mode)));
   const card = $("#stop-map-card"), body = $("#stop-body");
@@ -1015,10 +1031,11 @@ function drawStopMap() {
     }).addTo(stopMap).bindPopup(`<strong>${esc(name)}</strong><br><span class="mono">${esc(code || id)}</span><br><span class="mono">${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}</span>`).openPopup();
     if (S.loc) {
       pts.push([S.loc.lat, S.loc.lon]);
-      L.marker([S.loc.lat, S.loc.lon], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false, interactive: false, title: "You are here" }).addTo(stopMap);
+      drawWalkingPosition(false);
     }
     if (pts.length > 1) stopMap.fitBounds(pts, { padding: [40, 40], maxZoom: 17 });
     else stopMap.setView(pts[0], 17);
+    stopMap.on("dragstart", () => { if (walkNav.active) { walkNav.follow = false; renderLiveWalkingPanel(); } });
     walkLayer = null;
     drawWalkLayer(false);
   });
@@ -1552,6 +1569,11 @@ view.addEventListener("click", e => {
   const hv = e.target.closest("[data-hv]");
   if (hv) setHomeMode(hv.dataset.hv);
   if (e.target.closest("[data-walk]")) showWalkRoute();
+  const navAction = e.target.closest("[data-walk-nav]")?.dataset.walkNav;
+  if (navAction === "start") startWalkingNavigation();
+  else if (navAction === "end") endWalkingNavigation();
+  else if (navAction === "recenter") recenterWalkingNavigation();
+  else if (navAction === "arrivals") setStopView("list");
 });
 // Walking route from the user's location to the stop (OpenRouteService via our /v1/walk proxy).
 const walkState = { id: null, route: null, error: null, busy: false, request: 0 };
@@ -1589,12 +1611,16 @@ function renderWalkDirections() {
   const route = walkState.id === stopState.id && walkState.route;
   panel.hidden = stopState.mode !== "map" || !route || walkState.busy;
   fitFillCards();
-  if (panel.hidden) { panel.innerHTML = ""; return; }
+  if (panel.hidden) { panel.innerHTML = ""; panel._walkRoute = null; return; }
+  if (panel._walkRoute === route && panel.innerHTML) { renderLiveWalkingPanel(); return; }
+  panel._walkRoute = route;
   const steps = route.steps || [];
   panel.innerHTML = `<h2 class="ptitle" id="walk-directions-title">Walking directions</h2>
     <p class="psub">From your starting location to ${esc(stopDisplay(stopState.id).name)}.</p>
-    ${steps.length ? `<ol class="walk-steps">${steps.map((step, i) => `<li><span class="walk-turn" aria-hidden="true">${walkTurnIcon(step.type)}</span><div class="grow"><div class="instruction"><span class="sr-only">Step ${i + 1}: </span>${esc(step.instruction)}</div><div class="sub">${step.distance_m > 0 ? `Continue for ${esc(fmtDist(step.distance_m))}` : step.type === 10 ? "Route destination" : ""}</div></div></li>`).join("")}</ol>` : `<p class="psub">Turn instructions are unavailable for this route. Follow the map or open Maps for directions.</p>`}
+    <div id="walk-nav"></div>
+    ${steps.length ? `<details class="walk-all"><summary>All walking directions</summary><ol class="walk-steps">${steps.map((step, i) => `<li data-walk-step="${i}"><span class="walk-turn" aria-hidden="true">${walkTurnIcon(step.type)}</span><div class="grow"><div class="instruction"><span class="sr-only">Step ${i + 1}: </span>${esc(step.instruction)}</div><div class="sub">${step.distance_m > 0 ? `Continue for ${esc(fmtDist(step.distance_m))}` : step.type === 10 ? "Route destination" : ""}</div></div></li>`).join("")}</ol></details>` : `<p class="psub">Turn instructions are unavailable for this route. Follow the map or open Maps for directions.</p>`}
     <a href="${walkDirectionsUrl(stopCoords(stopState.id))}" target="_blank" rel="noopener">Open walking navigation in Maps →</a>`;
+  renderLiveWalkingPanel();
 }
 function drawWalkLayer(fit) {
   if (!stopMap || !window.L) return;
@@ -1607,6 +1633,7 @@ function drawWalkLayer(fit) {
 async function showWalkRoute() {
   const id = stopState.id, c = stopCoords(id);
   if (!c || walkState.busy) return;
+  endWalkingNavigation(false);
   const request = ++walkState.request;
   walkState.id = id; walkState.route = null; walkState.error = null; walkState.busy = true;
   renderWalkBar();
@@ -1626,7 +1653,7 @@ async function showWalkRoute() {
   }
   if (request !== walkState.request || stopState.id !== id) return;
   walkState.route = route; walkState.error = error; walkState.busy = false;
-  if (S.view === "stop") { renderWalkBar(); drawWalkLayer(true); }
+  if (S.view === "stop") { renderWalkBar(); drawWalkingPosition(false); drawWalkLayer(true); }
 }
 view.addEventListener("pointerup", endSavedDrag);
 view.addEventListener("pointercancel", endSavedDrag);
