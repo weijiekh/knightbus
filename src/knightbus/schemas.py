@@ -107,3 +107,15 @@ class TripStopsResponse(BaseModel):
     route_short_name: str | None = None
     headsign: str | None = None
     stops: list[TripStop]
+
+
+class TripLiveBus(BaseModel):
+    vehicle_id: str
+    trip_id: str
+    observed_at: datetime
+    current_stop_sequence: int | None = None
+    arrivals: dict[int, datetime] = {}
+
+
+class TripJourneyResponse(TripStopsResponse):
+    buses: list[TripLiveBus]

@@ -12,9 +12,9 @@ from knightbus.logging import configure_logging
 from knightbus.predictor import ETAPredictor
 from knightbus.models import Route, Stop
 from knightbus.search import search as search_stops_and_routes, split_stop_name
-from knightbus.schemas import HealthResponse, SearchResponse, SearchRoute, StopEtaResponse, StopResponse, TripStopsResponse, VehicleResponse, WalkRouteResponse
+from knightbus.schemas import HealthResponse, SearchResponse, SearchRoute, StopEtaResponse, StopResponse, TripJourneyResponse, TripStopsResponse, VehicleResponse, WalkRouteResponse
 from knightbus.vehicles import route_vehicles as list_route_vehicles
-from knightbus.trips import get_trip_stops
+from knightbus.trips import get_trip_journey, get_trip_stops
 from knightbus.walking import WalkingError, WalkingUnavailable, in_service_area, walking_route
 
 configure_logging()
@@ -114,6 +114,14 @@ def stop_etas(
 @app.get("/v1/trips/{trip_id}/stops", response_model=TripStopsResponse)
 def trip_stops(trip_id: str, db: Session = Depends(get_db)) -> TripStopsResponse:
     result = get_trip_stops(db, trip_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No stops found for trip {trip_id}")
+    return result
+
+
+@app.get("/v1/trips/{trip_id}/journey", response_model=TripJourneyResponse)
+def trip_journey(trip_id: str, db: Session = Depends(get_db)) -> TripJourneyResponse:
+    result = get_trip_journey(db, trip_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No stops found for trip {trip_id}")
     return result
