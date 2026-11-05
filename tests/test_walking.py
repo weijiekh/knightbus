@@ -64,7 +64,7 @@ def test_route_is_cached(monkeypatch) -> None:
     assert first == second
     assert len(calls) == 1
     assert calls[0]["url"] == "https://ors.test/v2/directions/foot-walking/geojson"
-    assert calls[0]["json"] == {"coordinates": [[101.7, 3.15], [101.71, 3.16]]}
+    assert calls[0]["json"] == {"coordinates": [[101.7, 3.15], [101.71, 3.16]], "instructions": True, "language": "en"}
     assert calls[0]["auth"] == "test-key"
 
 
@@ -95,3 +95,38 @@ def test_walk_endpoint_returns_503_without_key(monkeypatch) -> None:
     response = client.get("/v1/walk", params={"from_lat": 3.15, "from_lon": 101.7, "to_lat": 3.16, "to_lon": 101.71})
 
     assert response.status_code == 503
+
+
+def test_walk_endpoint_returns_ordered_turn_instructions(monkeypatch) -> None:
+    from copy import deepcopy
+
+    _configure(monkeypatch)
+    payload = deepcopy(PAYLOAD)
+    payload["features"][0]["properties"]["segments"] = [
+        {"steps": [{"instruction": "Head north on Jalan SS 2", "distance": 120, "type": 11}]},
+        {"steps": [
+            {"instruction": "Turn left onto the footpath", "distance": 30, "type": 0},
+            {"instruction": "Arrive at your destination", "distance": 0, "type": 10},
+        ]},
+    ]
+    monkeypatch.setattr(walking.httpx, "post", lambda *a, **kw: httpx.Response(200, json=payload))
+    response = TestClient(app).get("/v1/walk", params={"from_lat": 3.15, "from_lon": 101.7, "to_lat": 3.16, "to_lon": 101.71})
+
+    assert response.status_code == 200
+    assert response.json()["steps"] == [
+        {"instruction": "Head north on Jalan SS 2", "distance_m": 120, "type": 11},
+        {"instruction": "Turn left onto the footpath", "distance_m": 30, "type": 0},
+        {"instruction": "Arrive at your destination", "distance_m": 0, "type": 10},
+    ]
+
+
+@pytest.mark.parametrize("segments", [None, [{"steps": [{"instruction": "Turn left"}]}], [{"steps": [{"instruction": " ", "distance": 10}]}]])
+def test_bad_instructions_preserve_usable_map_route(segments) -> None:
+    from copy import deepcopy
+
+    payload = deepcopy(PAYLOAD)
+    payload["features"][0]["properties"]["segments"] = segments
+    route = walking.parse_ors_geojson(payload)
+    assert route.steps == []
+    assert route.distance_m == 512.4
+    assert route.geometry == [[3.15, 101.7], [3.151, 101.71]]

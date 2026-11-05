@@ -142,7 +142,7 @@ def walk(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except WalkingError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return WalkRouteResponse(distance_m=route.distance_m, duration_s=route.duration_s, geometry=route.geometry)
+    return WalkRouteResponse(distance_m=route.distance_m, duration_s=route.duration_s, geometry=route.geometry, steps=route.steps)
 
 
 @app.get("/v1/routes/{route_id}/vehicles", response_model=list[VehicleResponse])

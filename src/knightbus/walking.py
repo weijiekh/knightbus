@@ -7,11 +7,12 @@ views of the same stop do not spend the free-tier quota.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
 from knightbus.config import get_settings
+from knightbus.schemas import WalkStep
 
 FOOT_PATH = "/v2/directions/foot-walking/geojson"
 REQUEST_TIMEOUT_SECONDS = 8.0
@@ -34,6 +35,7 @@ class WalkRoute:
     distance_m: float
     duration_s: float
     geometry: list[list[float]]  # [[lat, lon], ...]
+    steps: list[WalkStep] = field(default_factory=list)
 
 
 _cache: dict[tuple[float, float, float, float], tuple[float, WalkRoute]] = {}
@@ -50,10 +52,21 @@ def parse_ors_geojson(payload: dict) -> WalkRoute:
         summary = feature["properties"]["summary"]
         coords = feature["geometry"]["coordinates"]
         geometry = [[round(lat, 5), round(lon, 5)] for lon, lat in coords]
+        # Older responses can contain geometry without instructions. A malformed
+        # instruction list must not prevent displaying an otherwise usable route.
+        try:
+            steps = [
+                WalkStep(instruction=step["instruction"].strip(), distance_m=step["distance"], type=step.get("type"))
+                for segment in feature["properties"].get("segments", [])
+                for step in segment.get("steps", [])
+            ]
+        except (AttributeError, KeyError, TypeError, ValueError):
+            steps = []
         return WalkRoute(
             distance_m=float(summary["distance"]),
             duration_s=float(summary["duration"]),
             geometry=geometry,
+            steps=steps,
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise WalkingError("unexpected routing response") from exc
@@ -73,7 +86,7 @@ def walking_route(from_lat: float, from_lon: float, to_lat: float, to_lon: float
     try:
         response = httpx.post(
             settings.ors_base_url.rstrip("/") + FOOT_PATH,
-            json={"coordinates": [[from_lon, from_lat], [to_lon, to_lat]]},
+            json={"coordinates": [[from_lon, from_lat], [to_lon, to_lat]], "instructions": True, "language": "en"},
             headers={"Authorization": settings.ors_api_key, "Accept": "application/geo+json"},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
@@ -82,7 +95,10 @@ def walking_route(from_lat: float, from_lon: float, to_lat: float, to_lon: float
     if response.status_code != 200:
         raise WalkingError(f"routing service returned HTTP {response.status_code}")
 
-    route = parse_ors_geojson(response.json())
+    try:
+        route = parse_ors_geojson(response.json())
+    except ValueError as exc:
+        raise WalkingError("unexpected routing response") from exc
     if len(_cache) >= CACHE_MAX_ENTRIES:
         _cache.pop(next(iter(_cache)))
     _cache[key] = (now, route)

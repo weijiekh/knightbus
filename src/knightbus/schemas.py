@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class EtaItem(BaseModel):
@@ -86,10 +86,17 @@ class SearchResponse(BaseModel):
     routes: list[SearchRoute]
 
 
+class WalkStep(BaseModel):
+    instruction: str = Field(min_length=1)
+    distance_m: float = Field(ge=0, allow_inf_nan=False)
+    type: int | None = None
+
+
 class WalkRouteResponse(BaseModel):
     distance_m: float
     duration_s: float
     geometry: list[list[float]]  # [[lat, lon], ...]
+    steps: list[WalkStep] = Field(default_factory=list)
 
 
 class TripStop(BaseModel):
