@@ -109,6 +109,12 @@ a { color: var(--accent); }
 .walk-bar[hidden] { display: none; }
 .walk-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .walk-bar button, .walk-bar a { flex: none; min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; text-decoration: none; cursor: pointer; }
+.walk-steps { list-style: none; }
+.walk-steps li { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); line-height: 1.45; }
+.walk-steps li:last-child { border-bottom: 0; padding-bottom: 0; }
+.walk-turn { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--accent-dim); color: var(--accent); font-size: 22px; }
+.walk-steps .instruction { font-size: 14px; overflow-wrap: anywhere; }
+.walk-steps .sub { margin-top: 3px; }
 .walk-bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .stop-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
 [data-theme="dark"] #stop-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
@@ -744,7 +750,8 @@ function fitFillCards() {
   const nav = document.querySelector("nav.tabs")?.offsetHeight || 76;
   document.querySelectorAll(".map-card.fill:not([hidden])").forEach(card => {
     const top = card.getBoundingClientRect().top;
-    card.style.height = Math.max(280, window.innerHeight - top - nav - 12) + "px";
+    const directionsVisible = card.id === "stop-map-card" && $("#walk-directions")?.hidden === false;
+    card.style.height = (directionsVisible ? 280 : Math.max(280, window.innerHeight - top - nav - 12)) + "px";
   });
   if (map) map.invalidateSize();
   if (stopMap) stopMap.invalidateSize();
@@ -934,7 +941,7 @@ function stopHeadText(id) {
 }
 function renderStop({ id }) {
   destroyStopMap();
-  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; stopState.mode = "list"; walkState.id = null; walkState.route = null; walkState.error = null; }
+  if (stopState.id !== id) { stopState.id = id; stopState.data = null; stopState.showAll = false; stopState.mode = "list"; walkState.id = null; walkState.route = null; walkState.error = null; walkState.busy = false; walkState.request++; }
   const { name, meta } = stopHeadText(id);
   const saved = isSaved(id);
   view.innerHTML = `
@@ -962,6 +969,7 @@ function renderStop({ id }) {
         <a id="walk-maps" href="#" target="_blank" rel="noopener">Maps</a>
       </div>
     </div>
+    <section class="panel" id="walk-directions" aria-labelledby="walk-directions-title" hidden></section>
     <div id="stop-body"></div>`;
   setStopView(stopState.mode);
   if (stopState.data) renderStopBody(); else loadStop(id);
@@ -1435,7 +1443,7 @@ view.addEventListener("click", e => {
   if (e.target.closest("[data-walk]")) showWalkRoute();
 });
 // Walking route from the user's location to the stop (OpenRouteService via our /v1/walk proxy).
-const walkState = { id: null, route: null, error: null, busy: false };
+const walkState = { id: null, route: null, error: null, busy: false, request: 0 };
 let walkLayer = null;
 function walkDirectionsUrl(c) {
   return `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}&travelmode=walking`;
@@ -1445,6 +1453,7 @@ function renderWalkBar() {
   if (!bar) return;
   const c = stopCoords(stopState.id);
   bar.hidden = !c || stopState.mode !== "map";
+  renderWalkDirections();
   if (!c) return;
   const text = $("#walk-text"), btn = $("#walk-btn"), maps = $("#walk-maps");
   maps.href = walkDirectionsUrl(c);
@@ -1460,6 +1469,22 @@ function renderWalkBar() {
     btn.textContent = walkState.error ? "Retry" : "Show walk";
   }
 }
+function walkTurnIcon(type) {
+  return ({0: "↰", 1: "↱", 2: "↰", 3: "↱", 4: "↖", 5: "↗", 6: "↑", 7: "↻", 8: "↗", 9: "↶", 10: "⚑", 11: "↑", 12: "↖", 13: "↗"})[type] || "↑";
+}
+function renderWalkDirections() {
+  const panel = $("#walk-directions");
+  if (!panel) return;
+  const route = walkState.id === stopState.id && walkState.route;
+  panel.hidden = stopState.mode !== "map" || !route || walkState.busy;
+  fitFillCards();
+  if (panel.hidden) { panel.innerHTML = ""; return; }
+  const steps = route.steps || [];
+  panel.innerHTML = `<h2 class="ptitle" id="walk-directions-title">Walking directions</h2>
+    <p class="psub">From your starting location to ${esc(stopDisplay(stopState.id).name)}.</p>
+    ${steps.length ? `<ol class="walk-steps">${steps.map((step, i) => `<li><span class="walk-turn" aria-hidden="true">${walkTurnIcon(step.type)}</span><div class="grow"><div class="instruction"><span class="sr-only">Step ${i + 1}: </span>${esc(step.instruction)}</div><div class="sub">${step.distance_m > 0 ? `Continue for ${esc(fmtDist(step.distance_m))}` : step.type === 10 ? "Route destination" : ""}</div></div></li>`).join("")}</ol>` : `<p class="psub">Turn instructions are unavailable for this route. Follow the map or open Maps for directions.</p>`}
+    <a href="${walkDirectionsUrl(stopCoords(stopState.id))}" target="_blank" rel="noopener">Open walking navigation in Maps →</a>`;
+}
 function drawWalkLayer(fit) {
   if (!stopMap || !window.L) return;
   if (walkLayer) { walkLayer.remove(); walkLayer = null; }
@@ -1471,24 +1496,28 @@ function drawWalkLayer(fit) {
 async function showWalkRoute() {
   const id = stopState.id, c = stopCoords(id);
   if (!c || walkState.busy) return;
+  const request = ++walkState.request;
   walkState.id = id; walkState.route = null; walkState.error = null; walkState.busy = true;
   renderWalkBar();
+  let route = null, error = null;
   try {
     if (!S.loc) {
       const pos = await getLocation();
       S.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Your location", gps: true };
     }
+    if (request !== walkState.request || stopState.id !== id) return;
     const q = new URLSearchParams({ from_lat: S.loc.lat, from_lon: S.loc.lon, to_lat: c.lat, to_lon: c.lon });
     const res = await fetch(`${API_BASE}/v1/walk?${q}`);
-    if (res.status === 503) walkState.error = "Walking route not available right now";
-    else if (res.status === 422) walkState.error = "Stop is outside the walking service area";
-    else if (!res.ok) walkState.error = "Walking route failed. Try again";
-    else walkState.route = await res.json();
+    if (res.status === 503) error = "Walking route not available right now";
+    else if (res.status === 422) error = "Stop is outside the walking service area";
+    else if (!res.ok) error = "Walking route failed. Try again";
+    else route = await res.json();
   } catch (err) {
-    walkState.error = err?.code === 1 ? "Allow location to get a walking route" : "Walking route failed. Try again";
+    error = err?.code === 1 ? "Allow location to get a walking route" : "Walking route failed. Try again";
   }
-  walkState.busy = false;
-  if (stopState.id === id) { drawWalkLayer(true); renderWalkBar(); }
+  if (request !== walkState.request || stopState.id !== id) return;
+  walkState.route = route; walkState.error = error; walkState.busy = false;
+  if (S.view === "stop") { renderWalkBar(); drawWalkLayer(true); }
 }
 view.addEventListener("pointerup", endSavedDrag);
 view.addEventListener("pointercancel", endSavedDrag);
