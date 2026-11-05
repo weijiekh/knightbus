@@ -1528,17 +1528,28 @@ function destroyRouteMap() { routeMapDraw++; if (routeMap) { routeMap.remove(); 
 function renderRoute({ id }) {
   const meta = S.routeMeta[id] || {};
   if (routeState.id !== id) { routeState.id = id; routeState.vehicles = null; routeState.error = false; routeState.selected = null; routeState.direction = "all"; routeState.labels = Object.create(null); routeState.expanded = false; }
-  const label = meta.short_name || id;
-  addRecent({ kind: "route", id, label, long_name: meta.long_name });
+  if (meta.short_name || meta.long_name) addRecent({ kind: "route", id, label: meta.short_name || meta.long_name, long_name: meta.long_name });
   const long = meta.long_name ? titleCase(meta.long_name.replace(/\s*~\s*/g, " ↔ ")) : "";
   view.innerHTML = `
     <div class="bar"><button type="button" class="icon-btn ghost" aria-label="Back" onclick="goBack()">${I.back}</button><div style="flex:1"></div>
       <button type="button" class="icon-btn ghost" aria-label="Refresh vehicles" onclick="refreshView(true)">${I.refresh}</button></div>
     <div class="stop-head"><div class="code">Live buses on route</div>
-      <h1><span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(label)}</span>${esc(long)}</h1>
+      <h1 id="route-heading">${meta.short_name || meta.long_name ? `<span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(meta.short_name || "Bus")}</span>${esc(long)}` : "Loading route…"}</h1>
       <div class="fresh" id="route-fresh"></div></div>
     <div class="route-filter" id="route-directions" role="group" aria-label="Filter buses by direction"></div><div id="route-body"></div>`;
+  loadRouteDetails(id);
   if (routeState.vehicles) drawRoute(); else loadRoute(id);
+}
+async function loadRouteDetails(id) {
+  try {
+    const meta = await apiFetch(`/v1/routes/${encodeURIComponent(id)}`);
+    S.routeMeta[id] = meta;
+    if (S.view !== "route" || currentRoute.id !== id) return;
+    $("#route-heading").innerHTML = `<span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(meta.short_name || "Bus")}</span>${esc(titleCase((meta.long_name || "").replace(/\s*~\s*/g, " ↔ ")))}`;
+    addRecent({ kind: "route", id, label: meta.short_name || meta.long_name || "Bus route", long_name: meta.long_name });
+  } catch {
+    if (S.view === "route" && currentRoute.id === id && !S.routeMeta[id]?.short_name && !S.routeMeta[id]?.long_name) $("#route-heading").textContent = "Bus route · name unavailable";
+  }
 }
 async function loadRoute(id) {
   S.lastLoadAt = Date.now();
