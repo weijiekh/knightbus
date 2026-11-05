@@ -98,3 +98,50 @@ test('delayed map initialization ignores superseded renders', () => {
   assert.equal(markers().length, 1);
   assert.match(markers()[0].options.title, /Bus new/);
 });
+
+test('a bus with a trip but no matched stop can still be followed by vehicle ID', () => {
+  const {ctx, run, $} = setup();
+  ctx.buses = [{vehicle_id:'bus 1',trip_id:'trip',current_stop_sequence:2,observed_at:new Date().toISOString()}];
+  run('routeState.vehicles = buses; drawRoute()');
+  assert.match($('#route-list').innerHTML, /href="#\/trip\/trip\/live\/bus%201"/);
+});
+
+test('direct route links resolve public names without cached search metadata', async () => {
+  const {ctx, run, $} = setup();
+  const recents = [];
+  ctx.S = {view:'route',routeMeta:{}};
+  ctx.currentRoute = {id:'internal-id'};
+  ctx.addRecent = r => recents.push(r);
+  ctx.apiFetch = async () => ({route_id:'internal-id',short_name:'190',long_name:'Kelana Jaya ~ Pasar Seni'});
+  await run('loadRouteDetails("internal-id")');
+  assert.match($('#route-heading').innerHTML, />190</);
+  assert.match($('#route-heading').innerHTML, /Kelana Jaya ↔ Pasar Seni/);
+  assert.doesNotMatch($('#route-heading').innerHTML, /internal-id/);
+  assert.equal(recents[0].label, '190');
+});
+
+test('late route-name responses do not overwrite another route heading', async () => {
+  const {ctx, run, $} = setup();
+  ctx.S = {view:'route',routeMeta:{}};
+  ctx.currentRoute = {id:'other'};
+  ctx.apiFetch = async () => ({short_name:'190'});
+  await run('loadRouteDetails("old")');
+  assert.equal($('#route-heading').innerHTML, '');
+});
+
+test('recent routes replace cached internal IDs with public route names', async () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  const recent = {kind:'route',id:'internal-r190',label:'internal-r190'};
+  const element = {innerHTML:''};
+  const ctx = vm.createContext({
+    S:{view:'routes',recent:[recent],routeMeta:{}}, $:()=>element,
+    apiFetch:async()=>({route_id:recent.id,short_name:'190',long_name:'A ~ B'}),
+    save(){},esc:String,titleCase:String,I:{chev:''},
+  });
+  vm.runInContext(html.slice(html.indexOf('function routeResultCard'),html.indexOf('async function searchRoutes')),ctx);
+  await vm.runInContext('loadRecentRouteNames(S.recent)',ctx);
+  assert.equal(recent.label,'190');
+  assert.match(element.innerHTML,/>190</);
+  assert.match(element.innerHTML,/A ↔ B/);
+  assert.doesNotMatch(element.innerHTML,/>internal-r190</);
+});

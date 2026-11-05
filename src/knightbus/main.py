@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 import uvicorn
 
@@ -9,11 +10,11 @@ from knightbus.config import get_settings
 from knightbus.db import get_db
 from knightbus.logging import configure_logging
 from knightbus.predictor import ETAPredictor
-from knightbus.models import Stop
+from knightbus.models import Route, Stop
 from knightbus.search import search as search_stops_and_routes, split_stop_name
-from knightbus.schemas import HealthResponse, SearchResponse, StopEtaResponse, StopResponse, TripStopsResponse, VehicleResponse, WalkRouteResponse
+from knightbus.schemas import HealthResponse, SearchResponse, SearchRoute, StopEtaResponse, StopResponse, TripJourneyResponse, TripStopsResponse, VehicleResponse, WalkRouteResponse
 from knightbus.vehicles import route_vehicles as list_route_vehicles
-from knightbus.trips import get_trip_stops
+from knightbus.trips import get_trip_journey, get_trip_stops
 from knightbus.walking import WalkingError, WalkingUnavailable, in_service_area, walking_route
 
 configure_logging()
@@ -118,6 +119,14 @@ def trip_stops(trip_id: str, db: Session = Depends(get_db)) -> TripStopsResponse
     return result
 
 
+@app.get("/v1/trips/{trip_id}/journey", response_model=TripJourneyResponse)
+def trip_journey(trip_id: str, db: Session = Depends(get_db)) -> TripJourneyResponse:
+    result = get_trip_journey(db, trip_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No stops found for trip {trip_id}")
+    return result
+
+
 @app.get("/v1/walk", response_model=WalkRouteResponse)
 def walk(
     from_lat: float = Query(ge=-90, le=90),
@@ -133,12 +142,20 @@ def walk(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except WalkingError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return WalkRouteResponse(distance_m=route.distance_m, duration_s=route.duration_s, geometry=route.geometry)
+    return WalkRouteResponse(distance_m=route.distance_m, duration_s=route.duration_s, geometry=route.geometry, steps=route.steps)
 
 
 @app.get("/v1/routes/{route_id}/vehicles", response_model=list[VehicleResponse])
 def route_vehicles(route_id: str, db: Session = Depends(get_db)) -> list[VehicleResponse]:
     return list_route_vehicles(db, route_id)
+
+
+@app.get("/v1/routes/{route_id}", response_model=SearchRoute)
+def route_details(route_id: str, db: Session = Depends(get_db)) -> SearchRoute:
+    route = db.execute(select(Route).where(Route.route_id == route_id).order_by(Route.id)).scalars().first()
+    if route is None:
+        raise HTTPException(status_code=404, detail="Route not found")
+    return SearchRoute(route_id=route.route_id, short_name=route.short_name, long_name=route.long_name, feed_name=route.feed_name)
 
 
 @app.get("/v1/models/current")

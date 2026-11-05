@@ -7,7 +7,7 @@ from knightbus.models import Stop, Trip, VehicleState
 from knightbus.schemas import VehicleResponse
 
 
-def route_vehicles(db: Session, route_id: str) -> list[VehicleResponse]:
+def route_vehicles(db: Session, route_id: str, feed_name: str | None = None) -> list[VehicleResponse]:
     """Enrich positions with static metadata without crossing feed boundaries."""
     # VehicleState is an append-only history. Rank before filtering by route so a
     # bus that has switched routes cannot keep appearing on its previous route.
@@ -22,7 +22,7 @@ def route_vehicles(db: Session, route_id: str) -> list[VehicleResponse]:
         .where(VehicleState.observed_at >= datetime.now(timezone.utc) - timedelta(minutes=30))
         .subquery()
     )
-    rows = db.execute(
+    query = (
         select(VehicleState, Trip.headsign, Trip.direction_id, Stop.name)
         .join(latest, and_(latest.c.id == VehicleState.id, latest.c.position_rank == 1))
         .outerjoin(Trip, and_(Trip.feed_name == VehicleState.feed_name, Trip.trip_id == VehicleState.trip_id))
@@ -31,6 +31,9 @@ def route_vehicles(db: Session, route_id: str) -> list[VehicleResponse]:
         .order_by(VehicleState.observed_at.desc())
         .limit(100)
     )
+    if feed_name is not None:
+        query = query.where(VehicleState.feed_name == feed_name)
+    rows = db.execute(query)
     return [
         VehicleResponse(
             vehicle_id=v.vehicle_id, route_id=v.route_id, trip_id=v.trip_id,

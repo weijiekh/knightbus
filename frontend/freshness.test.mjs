@@ -136,3 +136,28 @@ test("tick ages hidden stop evidence and skips work while hidden", () => {
   assert.equal(rendered, 1);
   assert.equal(vm.runInContext("freshnessSummary(upcoming(stopState.data))", ctx), "Stale");
 });
+
+
+test("arrival footer preserves freshness messaging and vehicle-specific follow links after merging", () => {
+  const ctx = context(Date.parse("2026-11-04T00:00:00Z"));
+  ctx.group = [{ route_short_name: "190", trip_id: "trip /1", stop_id: "stop /2", vehicle_id: "bus /3",
+    prediction_source: "heuristic", predicted_arrival_time: "2026-11-04T00:10:00Z", data_timestamp: "2026-11-03T23:55:00Z" }];
+  const card = vm.runInContext("arrivalCard(group)", ctx);
+  assert.match(card, /last bus update is old/);
+  assert.match(card, /href="#\/trip\/trip%20%2F1\/stop%20%2F2\/bus%20%2F3"/);
+});
+
+
+test("merged arrival footer keeps sibling countdown markup and escapes provider text", () => {
+  const ctx = context(Date.parse("2026-11-04T00:00:00Z"));
+  vm.runInContext(section("function esc(str)", "const ACRONYMS"), ctx);
+  ctx.group = [
+    { headsign: "<img src=x onerror=alert(1)>", prediction_source: "schedule", predicted_arrival_time: "2026-11-04T00:10:00Z" },
+    { predicted_arrival_time: "2026-11-04T00:20:00Z" },
+  ];
+  const card = vm.runInContext("arrivalCard(group)", ctx);
+  assert.match(card, /<span class="then">then <span data-countdown=/);
+  assert.match(card, /data-countdown-kind="then">20 min<\/span>/);
+  assert.match(card, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(card, /<img/);
+});
