@@ -15,8 +15,27 @@ concurrency:
 jobs:
   train:
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 30
     steps:
+      - name: Validate training secrets
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in VM_HOST VM_USER VM_SSH_KEY VM_KNOWN_HOSTS DB_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing training secret: $name. Set it in the production environment or repository secrets."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6

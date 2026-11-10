@@ -93,7 +93,9 @@ changing it later requires `ALTER USER` inside the db.
 | `CLOUDFLARE_ACCOUNT_ID` | secret | Cloudflare account id |
 | `PAGES_PROJECT` | variable | `manabas` |
 
-Repository secrets (used by `train.yml`):
+Training secrets (used by `train.yml`; set in the `production` environment or
+as repository secrets). The training job selects `production`, like deployment,
+and validates these secrets before installing dependencies:
 
 | Secret | Value |
 |---|---|
