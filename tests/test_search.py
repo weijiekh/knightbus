@@ -185,3 +185,14 @@ def test_search_endpoint() -> None:
         assert client.get("/v1/search", params={"q": "masjid", "limit": 99}).status_code == 422
     finally:
         app.dependency_overrides.clear()
+
+
+def test_stop_routes_use_public_long_name_when_short_name_is_empty():
+    db = build_session()
+    stop = Stop(stop_id="terminal", name="MRT Serdang Jaya")
+    trip = Trip(trip_id="t", route_id="internal")
+    db.add_all([stop, trip, Route(route_id="internal", short_name="", long_name="T565")])
+    db.flush()
+    db.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=1))
+    db.commit()
+    assert search(db, "Serdang").stops[0].routes == ["T565"]

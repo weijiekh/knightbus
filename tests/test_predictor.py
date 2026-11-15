@@ -199,8 +199,7 @@ def test_stop_etas_endpoint_includes_stop_name_and_code(monkeypatch) -> None:
         assert (body["lat"], body["lon"]) == (3.149, 101.696)
         plain = client.get("/v1/stops/1002/etas").json()
         assert plain["stop_code"] is None and plain["stop_name"] == "Plain Stop"
-        unknown = client.get("/v1/stops/9999/etas").json()
-        assert unknown["stop_name"] is None and unknown["stop_code"] is None
+        assert client.get("/v1/stops/9999/etas").status_code == 404
     finally:
         main_module.app.dependency_overrides.clear()
 
@@ -444,3 +443,88 @@ def test_expired_trip_update_is_not_clamped_to_now(monkeypatch):
                                arrival_time_unix=int(now.timestamp()) - 60, observed_at=now))
     session.commit()
     assert ETAPredictor().get_stop_etas(session, stop.stop_id) == []
+
+
+def test_after_midnight_uses_previous_service_date_and_preserves_live_delay(monkeypatch):
+    from knightbus.models import ServiceCalendar
+    now = _freeze_time(monkeypatch, 0)
+    db = build_session()
+    stop, trip = _stop_with_trip(db, "night", {1: 23 * 3600 + 50 * 60, 2: 24 * 3600 + 20 * 60})
+    trip.service_id = "saturday"
+    db.add(ServiceCalendar(service_id="saturday", saturday=True, start_date="20260101", end_date="20261231"))
+    db.add(VehicleState(vehicle_id="night-bus", trip_id="night", current_stop_sequence=1,
+                        timestamp_unix=int(now.timestamp()), observed_at=now, lat=3.02, lon=101.71))
+    db.commit()
+    items = ETAPredictor().get_stop_etas(db, stop.stop_id)
+    assert len(items) == 1
+    assert items[0].scheduled_arrival_time == now + timedelta(minutes=20)
+    assert items[0].predicted_arrival_time == now + timedelta(minutes=30)
+    assert items[0].delay_seconds == 600 and items[0].vehicle_id == "night-bus"
+
+
+def test_calendars_are_scoped_to_feed_and_support_exception_only_feeds(monkeypatch):
+    from knightbus.models import CalendarDate, ServiceCalendar
+    now = _freeze_time(monkeypatch)
+    db = build_session()
+    stop, trip = _stop_with_trip(db, "sunday", {1: 13 * 3600})
+    trip.service_id = "shared"
+    db.add_all([
+        ServiceCalendar(feed_name="default", service_id="shared", sunday=False, start_date="20260101", end_date="20261231"),
+        ServiceCalendar(feed_name="other", service_id="shared", sunday=True, start_date="20260101", end_date="20261231"),
+    ])
+    db.commit()
+    assert ETAPredictor().get_stop_etas(db, stop.stop_id) == []
+    db.add(CalendarDate(feed_name="default", service_id="shared", date="20261115", exception_type=1))
+    db.commit()
+    assert ETAPredictor().get_stop_etas(db, stop.stop_id)
+    ids = ETAPredictor()._valid_service_ids(db, now, "exception-only")
+    assert ids is None
+    db.add(CalendarDate(feed_name="exception-only", service_id="special", date="20261116", exception_type=1))
+    db.commit()
+    assert ETAPredictor()._valid_service_ids(db, now, "exception-only") == set()
+
+
+def test_known_stop_with_no_arrivals_retains_metadata(monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+    from knightbus import main
+    from knightbus.db import get_db
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Stop(stop_id="quiet", name="KL123 Quiet Stop", lat=3.1, lon=101.7))
+        db.commit()
+        main.app.dependency_overrides[get_db] = lambda: db
+        monkeypatch.setattr(main.predictor, "get_stop_etas", lambda *a, **kw: [])
+        try:
+            response = TestClient(main.app).get("/v1/stops/quiet/etas")
+            assert response.status_code == 200
+            assert response.json()["items"] == [] and response.json()["stop_name"] == "Quiet Stop"
+            batch = TestClient(main.app).get("/v1/stops/etas?stop_ids=quiet").json()[0]
+            assert batch["stop_code"] == "KL123"
+        finally:
+            main.app.dependency_overrides.clear()
+
+
+def test_nearby_rejects_invalid_coordinates_and_unbounded_radius():
+    from fastapi.testclient import TestClient
+    from knightbus.main import app
+    client = TestClient(app)
+    for params in ({"lat": "nan", "lon": 101}, {"lat": 91, "lon": 101},
+                   {"lat": 3, "lon": 181}, {"lat": 3, "lon": 101, "radius_m": -1},
+                   {"lat": 3, "lon": 101, "radius_m": 1000000}):
+        assert client.get("/v1/stops/nearby", params=params).status_code == 422
+
+
+def test_recurring_overnight_trip_is_not_reported_as_two_live_buses(monkeypatch):
+    now = _freeze_time(monkeypatch, 0)
+    db = build_session()
+    stop, _ = _stop_with_trip(db, "recurring", {1: 24 * 3600, 2: 25 * 3600})
+    # This route also operates from midnight on today's service day.
+    _stop_with_trip(db, "early", {1: 0})
+    db.add(VehicleState(vehicle_id="overnight", trip_id="recurring", current_stop_sequence=1,
+                        timestamp_unix=int(now.timestamp()), observed_at=now, lat=3.02, lon=101.71))
+    db.commit()
+    items = ETAPredictor().get_stop_etas(db, stop.stop_id)
+    live = [item for item in items if item.vehicle_id == "overnight"]
+    assert [item.minutes_away for item in live] == [0, 60]

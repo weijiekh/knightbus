@@ -109,15 +109,16 @@ def _routes_for_stops(db: Session, stop_pks: list[int]) -> dict[int, list[str]]:
     if not stop_pks:
         return {}
     rows = db.execute(
-        select(StopTime.stop_id_ref, Route.short_name)
+        select(StopTime.stop_id_ref, func.coalesce(func.nullif(Route.short_name, ""), func.nullif(Route.long_name, "")))
         .join(Trip, Trip.id == StopTime.trip_id_ref)
         .join(Route, (Route.feed_name == Trip.feed_name) & (Route.route_id == Trip.route_id))
-        .where(StopTime.stop_id_ref.in_(stop_pks), Route.short_name.is_not(None))
+        .where(StopTime.stop_id_ref.in_(stop_pks))
         .distinct()
     ).all()
     grouped: dict[int, set[str]] = {}
     for stop_pk, short_name in rows:
-        grouped.setdefault(stop_pk, set()).add(short_name)
+        if short_name:
+            grouped.setdefault(stop_pk, set()).add(short_name)
     return {
         pk: sorted(names, key=_natural_key)[:MAX_ROUTES_PER_STOP] for pk, names in grouped.items()
     }

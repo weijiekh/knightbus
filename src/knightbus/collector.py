@@ -329,18 +329,23 @@ class GTFSCollector:
         if not candidates and route_id:
             key = ("route", feed_name, route_id)
             if key not in cache:
-                cache[key] = GTFSCollector._stops_where(db, Trip.route_id == route_id)
+                conditions = [Trip.route_id == route_id]
+                if feed_name is not None:
+                    conditions.append(Trip.feed_name == feed_name)
+                cache[key] = GTFSCollector._stops_where(db, *conditions)
             candidates = cache[key]
 
-        best_dist = STOP_MATCH_RADIUS_METERS
-        best_match: tuple[str, int] | None = None
-        for stop_id, stop_seq, slat, slon in candidates:
-            dist = haversine_meters(lat, lon, slat, slon)
-            if dist < best_dist:
-                best_dist = dist
-                best_match = (stop_id, stop_seq)
-
-        return best_match
+        nearby = sorted(
+            (haversine_meters(lat, lon, slat, slon), stop_id, stop_seq)
+            for stop_id, stop_seq, slat, slon in candidates
+        )
+        if not nearby or nearby[0][0] > STOP_MATCH_RADIUS_METERS:
+            return None
+        # GPS alone cannot distinguish a loop's repeated stop or two equally
+        # close stops. Keep the position, but do not invent stop progress.
+        if len(nearby) > 1 and nearby[1][0] - nearby[0][0] <= 25:
+            return None
+        return nearby[0][1], nearby[0][2]
 
     def normalize_trip_updates(self, db: Session, payload: FeedPayload) -> int:
         self.persist_raw_snapshot(db, "trip_updates", payload)

@@ -50,10 +50,13 @@ def _live_session():
     trips = [Trip(trip_id=tid, route_id='r', direction_id=direction) for tid, direction in [('t', 0), ('later', 0), ('reverse', 1)]]
     db.add_all([Route(route_id='r', short_name='190'), *stops, *trips])
     db.flush()
+    from zoneinfo import ZoneInfo
+    local = now.astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
+    seconds_now = local.hour * 3600 + local.minute * 60 + local.second
     for trip in trips:
         pattern = list(reversed(stops)) if trip.direction_id == 1 else stops
         for i, stop in enumerate(pattern):
-            db.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=(i + 1) * 10, arrival_seconds=36000 + i * 180))
+            db.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=(i + 1) * 10, arrival_seconds=seconds_now - 180 + i * 180))
     for vehicle, tid, seq, age, feed in [
         ('chosen', 't', 20, 10, 'default'), ('next', 'later', 10, 10, 'default'),
         ('opposite', 'reverse', 10, 10, 'default'), ('stale', 't', 10, 301, 'default'),
@@ -114,3 +117,25 @@ def test_route_details_returns_public_names_for_direct_links():
     result = route_details('internal-route-123', db)
     assert result.short_name == '190'
     assert result.long_name == 'Kota Damansara ~ Pasar Seni'
+
+
+def test_journey_keeps_gps_but_suppresses_estimates_outside_route_hours(monkeypatch):
+    from datetime import datetime, timezone
+    from knightbus import trips
+    from knightbus.schemas import VehicleResponse
+    db = _live_session()
+    # Existing fixture schedules are around the real local clock; move the
+    # simulated observation twelve hours away from that service span.
+    from datetime import timedelta
+    now = datetime.now(timezone.utc) - timedelta(hours=12)
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+    monkeypatch.setattr(trips, "datetime", FrozenDateTime)
+    monkeypatch.setattr(trips, "route_vehicles", lambda *a, **kw: [VehicleResponse(
+        vehicle_id="parked", route_id="r", trip_id="t", current_stop_sequence=20, observed_at=now,
+    )])
+    bus = trips.get_trip_journey(db, "t").buses[0]
+    assert bus.current_stop_sequence == 20
+    assert bus.arrivals == {}

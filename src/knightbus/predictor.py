@@ -1,17 +1,18 @@
 import logging
 from math import cos, radians
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
 
-from sqlalchemy import Select, desc, func, or_, select
+from sqlalchemy import Select, desc, or_, select
 from sqlalchemy.orm import Session
 
 from knightbus.config import get_settings
 from knightbus.features import build_feature_row
 from knightbus.ml import ResidualModel, load_residual_model
-from knightbus.models import CalendarDate, ModelVersion, Route, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.models import ModelVersion, Route, Stop, StopTime, Trip, TripUpdateState, VehicleState
 from knightbus.positions import latest_position_ids
+from knightbus.service import route_windows, valid_service_ids
 from knightbus.schemas import EtaItem, ModelInfoResponse, StopResponse
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters, scheduled_seconds_to_datetime
 
@@ -33,7 +34,8 @@ class ETAPredictor:
         self._model_mtime: float | None = None
         self._ml_model: ResidualModel | None = None
         self._service_tz = settings.gtfs_service_tzinfo
-        self._service_ids_cache: tuple[str, float, set[str] | None] | None = None
+        self._service_ids_cache: dict[tuple[str | None, str], tuple[float, set[str] | None]] = {}
+        self._route_windows_cache: dict[tuple[str, str], tuple[float, dict[str, tuple[int, int]]]] = {}
         self.current_model()
 
     def current_model(self) -> ResidualModel | None:
@@ -74,51 +76,68 @@ class ETAPredictor:
         if route_id:
             query = query.where(Trip.route_id == route_id)
 
-        valid_sids = self._valid_service_ids(db, now)
-        if valid_sids is not None:
-            query = query.where(Trip.service_id.in_(valid_sids))
-
-        # Timetable candidates and live candidates are independent: a delayed bus
-        # must not disappear just because its scheduled arrival is in the past.
         local_now = now.astimezone(self._service_tz)
         now_seconds = local_now.hour * 3600 + local_now.minute * 60 + local_now.second
         latest_updates = self._latest_trip_updates(db, stop_id, now, stop.feed_name)
         latest_vehicles = self._latest_vehicles(db, now, stop.feed_name)
         live_ids = set(latest_updates) | set(latest_vehicles)
-        schedule_rows = db.execute(
-            query.where(StopTime.arrival_seconds >= now_seconds).limit(25)
-        ).all()
-        if live_ids:
-            live_rows = db.execute(query.where(Trip.trip_id.in_(live_ids))).all()
-            seen = {st.id for st, _, _ in schedule_rows}
-            schedule_rows.extend(row for row in live_rows if row[0].id not in seen)
-        # A parked bus can still transmit GPS overnight. Do not interpret that
-        # as a huge delay that restarts yesterday's service. Keep future timetable
-        # entries, but only estimate inside this route's scheduled operating span.
-        route_ids = {trip.route_id for _, trip, _ in schedule_rows}
-        window_query = (
-            select(Trip.route_id, func.min(StopTime.arrival_seconds), func.max(StopTime.arrival_seconds))
-            .join(StopTime, StopTime.trip_id_ref == Trip.id)
-            .where(Trip.feed_name == stop.feed_name, Trip.route_id.in_(route_ids))
-            .group_by(Trip.route_id)
-        )
-        if valid_sids is not None:
-            window_query = window_query.where(Trip.service_id.in_(valid_sids))
-        operating_routes = {
-            rid for rid, first, last in db.execute(window_query)
-            if first is not None and last is not None and first <= now_seconds <= last
-        }
+        schedule_rows: list[tuple[StopTime, Trip, Route | None, datetime, bool]] = []
+        # 24:xx belongs to the preceding service day, including its calendar.
+        for offset in (0, 1):
+            reference = local_now - timedelta(days=offset)
+            valid_sids = self._valid_service_ids(db, reference, stop.feed_name)
+            day_query = query
+            if valid_sids is not None:
+                day_query = day_query.where(Trip.service_id.in_(valid_sids))
+            if offset:
+                day_query = day_query.where(StopTime.arrival_seconds >= 86400)
+            day_seconds = now_seconds + offset * 86400
+            rows = db.execute(day_query.where(StopTime.arrival_seconds >= day_seconds).limit(25)).all()
+            if live_ids:
+                live_rows = db.execute(day_query.where(Trip.trip_id.in_(live_ids))).all()
+                seen = {st.id for st, _, _ in rows}
+                rows.extend(row for row in live_rows if row[0].id not in seen)
+            if not rows:
+                continue
+            key = (stop.feed_name, reference.strftime("%Y%m%d"))
+            cached = self._route_windows_cache.get(key)
+            if cached is None or monotonic() - cached[0] >= SERVICE_IDS_TTL_SECONDS:
+                if len(self._route_windows_cache) >= 16:
+                    self._route_windows_cache.clear()
+                cached = (monotonic(), route_windows(db, stop.feed_name, valid_sids))
+                self._route_windows_cache[key] = cached
+            operating = {rid for rid, (first, last) in cached[1].items() if first <= day_seconds <= last}
+            schedule_rows.extend((st, trip, route, reference, trip.route_id in operating) for st, trip, route in rows)
         # Only trips with a live bus use their full schedule (delay from progress).
         trip_schedule_seconds = self._trip_schedule_seconds(
-            db, [trip.id for _, trip, _ in schedule_rows if trip.trip_id in latest_vehicles]
+            db, [trip.id for _, trip, _, _, operating in schedule_rows if operating and trip.trip_id in latest_vehicles]
         )
 
+        # A recurring trip_id can exist on both sides of midnight. Associate
+        # realtime evidence with one service day, rather than showing one bus twice.
+        live_days: dict[int, tuple[float, date]] = {}
+        for st, trip, _, reference, operating in schedule_rows:
+            if not operating or trip.trip_id not in live_ids:
+                continue
+            vehicle = latest_vehicles.get(trip.trip_id)
+            delay = delay_from_vehicle_progress(
+                now, vehicle, trip_schedule_seconds.get(trip.id, {}), reference, self._service_tz,
+            ) if vehicle else None
+            scheduled = scheduled_seconds_to_datetime(reference, st.arrival_seconds, self._service_tz)
+            if scheduled is None:
+                continue
+            update = latest_updates.get(trip.trip_id)
+            target = datetime.fromtimestamp(update.arrival_time_unix, timezone.utc) if update and update.arrival_time_unix else now
+            score = abs(delay) if delay is not None else abs((scheduled - target).total_seconds())
+            if trip.id not in live_days or score < live_days[trip.id][0]:
+                live_days[trip.id] = (score, reference.date())
+
         items: list[EtaItem] = []
-        for stop_time, trip, route in schedule_rows:
-            scheduled_arrival = scheduled_seconds_to_datetime(now, stop_time.arrival_seconds, self._service_tz)
-            operating = trip.route_id in operating_routes
-            trip_update = latest_updates.get(trip.trip_id) if operating else None
-            vehicle = latest_vehicles.get(trip.trip_id) if operating else None
+        for stop_time, trip, route, reference, operating in schedule_rows:
+            scheduled_arrival = scheduled_seconds_to_datetime(reference, stop_time.arrival_seconds, self._service_tz)
+            has_live = operating and trip.id in live_days and live_days[trip.id][1] == reference.date()
+            trip_update = latest_updates.get(trip.trip_id) if has_live else None
+            vehicle = latest_vehicles.get(trip.trip_id) if has_live else None
             if (
                 vehicle is not None
                 and vehicle.current_stop_sequence is not None
@@ -132,6 +151,8 @@ class ETAPredictor:
                     now=now,
                     vehicle=vehicle,
                     trip_schedule_seconds=trip_schedule_seconds.get(trip.id, {}),
+                    service_reference=reference,
+                    service_tz=self._service_tz,
                 )
 
             if trip_update and trip_update.arrival_time_unix:
@@ -152,6 +173,7 @@ class ETAPredictor:
             if (
                 predicted_arrival
                 and ml_model is not None
+                and reference.date() == local_now.date()
                 and delay_seconds is not None
                 and (vehicle is None or vehicle.position_source != "kiosk")
                 and predicted_arrival >= now
@@ -218,49 +240,22 @@ class ETAPredictor:
         )
         return list(db.execute(query).scalars().all())
 
-    def _valid_service_ids(self, db: Session, now: datetime) -> set[str] | None:
-        """Return service_ids valid for today, or None if no calendar data exists."""
-        local_now = now.astimezone(self._service_tz)
-        today_str = local_now.strftime("%Y%m%d")
-        day_col = local_now.strftime("%A").lower()  # e.g. "monday"
-
-        cached = self._service_ids_cache
-        if cached is not None and cached[0] == today_str and monotonic() - cached[1] < SERVICE_IDS_TTL_SECONDS:
-            return cached[2]
-        valid_ids = self._load_valid_service_ids(db, today_str, day_col)
-        self._service_ids_cache = (today_str, monotonic(), valid_ids)
-        return valid_ids
+    def _valid_service_ids(self, db: Session, now: datetime, feed_name: str | None = None) -> set[str] | None:
+        local = now.astimezone(self._service_tz)
+        date = local.strftime("%Y%m%d")
+        key = (feed_name, date)
+        cached = self._service_ids_cache.get(key)
+        if cached is not None and monotonic() - cached[0] < SERVICE_IDS_TTL_SECONDS:
+            return cached[1]
+        ids = self._load_valid_service_ids(db, date, feed_name)
+        if len(self._service_ids_cache) >= 16:
+            self._service_ids_cache.clear()
+        self._service_ids_cache[key] = (monotonic(), ids)
+        return ids
 
     @staticmethod
-    def _load_valid_service_ids(db: Session, today_str: str, day_col: str) -> set[str] | None:
-        # Check if any calendar data exists
-        has_calendar = db.execute(select(ServiceCalendar).limit(1)).scalars().first()
-        if has_calendar is None:
-            return None
-
-        day_filter = getattr(ServiceCalendar, day_col) == True  # noqa: E712
-        rows = db.execute(
-            select(ServiceCalendar.service_id).where(
-                day_filter,
-                ServiceCalendar.start_date <= today_str,
-                ServiceCalendar.end_date >= today_str,
-            )
-        ).scalars().all()
-        valid = set(rows)
-
-        # Apply calendar_dates exceptions
-        exceptions = db.execute(
-            select(CalendarDate.service_id, CalendarDate.exception_type).where(
-                CalendarDate.date == today_str
-            )
-        ).all()
-        for service_id, exception_type in exceptions:
-            if exception_type == 1:
-                valid.add(service_id)
-            elif exception_type == 2:
-                valid.discard(service_id)
-
-        return valid
+    def _load_valid_service_ids(db: Session, date: str, feed_name: str | None = None) -> set[str] | None:
+        return valid_service_ids(db, datetime.strptime(date, "%Y%m%d"), feed_name)
 
     def get_nearby_stops(
         self, db: Session, lat: float, lon: float, radius_m: float = 500.0, limit: int = 5

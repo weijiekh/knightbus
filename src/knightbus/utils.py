@@ -58,12 +58,14 @@ def delay_from_vehicle_progress(
     now: datetime,
     vehicle: VehicleState,
     trip_schedule_seconds: dict[int, int | None],
+    service_reference: datetime | None = None,
+    service_tz: ZoneInfo | None = None,
 ) -> int | None:
     if vehicle.current_stop_sequence is None:
         return None
 
     scheduled_current_seconds = trip_schedule_seconds.get(vehicle.current_stop_sequence)
-    scheduled_current_time = scheduled_seconds_to_datetime(now, scheduled_current_seconds)
+    scheduled_current_time = scheduled_seconds_to_datetime(service_reference or now, scheduled_current_seconds, service_tz)
     if scheduled_current_time is None:
         return None
 
