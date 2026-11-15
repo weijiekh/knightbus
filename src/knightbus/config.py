@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 from datetime import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
     gtfs_vehicle_positions_url: str | None = Field(default=None, alias="GTFS_VEHICLE_POSITIONS_URL")
     gtfs_trip_updates_url: str | None = Field(default=None, alias="GTFS_TRIP_UPDATES_URL")
     gtfs_request_timeout_seconds: int = Field(default=20, alias="GTFS_REQUEST_TIMEOUT_SECONDS")
+    kiosk_avl_mode: Literal["disabled", "shadow", "supplement"] = Field(default="disabled", alias="KIOSK_AVL_MODE")
+    kiosk_avl_url: str = Field(
+        default="https://myrapidbus.prasarana.com.my/avl/api/avl/region/rkl", alias="KIOSK_AVL_URL"
+    )
     gtfs_poll_interval_seconds: int = Field(default=30, alias="GTFS_POLL_INTERVAL_SECONDS")
     gtfs_service_timezone: str = Field(default="Asia/Kuala_Lumpur", alias="GTFS_SERVICE_TIMEZONE")
     gtfs_active_poll_start_local: str = Field(default="06:00", alias="GTFS_ACTIVE_POLL_START_LOCAL")

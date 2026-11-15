@@ -29,10 +29,12 @@ def test_predictor_prefers_trip_update_arrival() -> None:
             stop_sequence=1,
             arrival_time="10:00:00",
             departure_time="10:00:00",
-            arrival_seconds=36000,
-            departure_seconds=36000,
+            arrival_seconds=_local_seconds() + 600,
+            departure_seconds=_local_seconds() + 600,
         )
     )
+    session.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id,
+                         stop_sequence=0, arrival_seconds=max(0, _local_seconds() - 600)))
     session.add(
         TripUpdateState(
             trip_id="trip-1",
@@ -65,8 +67,8 @@ def test_predictor_uses_vehicle_progress_without_trip_updates() -> None:
                 stop_sequence=5,
                 arrival_time="10:10:00",
                 departure_time="10:10:00",
-                arrival_seconds=36600,
-                departure_seconds=36600,
+                arrival_seconds=_local_seconds() - 120,
+                departure_seconds=_local_seconds() - 120,
             ),
             StopTime(
                 trip_id_ref=trip.id,
@@ -74,16 +76,16 @@ def test_predictor_uses_vehicle_progress_without_trip_updates() -> None:
                 stop_sequence=6,
                 arrival_time="10:15:00",
                 departure_time="10:15:00",
-                arrival_seconds=36900,
-                departure_seconds=36900,
+                arrival_seconds=_local_seconds() + 300,
+                departure_seconds=_local_seconds() + 300,
             ),
-            VehicleState(
+            VehicleState(lat=3.02, lon=101.71,
                 vehicle_id="vehicle-2",
                 trip_id="trip-2",
                 route_id="route-2",
                 stop_id="1002",
                 current_stop_sequence=5,
-                timestamp_unix=int(datetime.now(timezone.utc).timestamp()) + 120,
+                timestamp_unix=int(datetime.now(timezone.utc).timestamp()),
             ),
         ]
     )
@@ -197,8 +199,7 @@ def test_stop_etas_endpoint_includes_stop_name_and_code(monkeypatch) -> None:
         assert (body["lat"], body["lon"]) == (3.149, 101.696)
         plain = client.get("/v1/stops/1002/etas").json()
         assert plain["stop_code"] is None and plain["stop_name"] == "Plain Stop"
-        unknown = client.get("/v1/stops/9999/etas").json()
-        assert unknown["stop_name"] is None and unknown["stop_code"] is None
+        assert client.get("/v1/stops/9999/etas").status_code == 404
     finally:
         main_module.app.dependency_overrides.clear()
 
@@ -242,12 +243,12 @@ def test_stop_etas_return_upcoming_trips_not_the_days_earliest() -> None:
 def test_vehicle_elsewhere_on_the_trip_sets_delay_and_passed_bus_is_dropped() -> None:
     session = build_session()
     now_s = _local_seconds()
-    stop, trip = _stop_with_trip(session, "live", {2: now_s + 300, 5: now_s + 900})
+    stop, trip = _stop_with_trip(session, "live", {1: max(0, now_s - 600), 2: now_s + 300, 5: now_s + 900})
     stop2, _ = _stop_with_trip(session, "gone", {7: now_s + 300})
     session.add_all([
-        VehicleState(vehicle_id="v-live", trip_id="live", stop_id="elsewhere", current_stop_sequence=2,
+        VehicleState(lat=3.02, lon=101.71, vehicle_id="v-live", trip_id="live", stop_id="elsewhere", current_stop_sequence=2,
                      observed_at=datetime.now(timezone.utc), timestamp_unix=int(datetime.now(timezone.utc).timestamp())),
-        VehicleState(vehicle_id="v-gone", trip_id="gone", stop_id="elsewhere", current_stop_sequence=9,
+        VehicleState(lat=3.02, lon=101.71, vehicle_id="v-gone", trip_id="gone", stop_id="elsewhere", current_stop_sequence=9,
                      observed_at=datetime.now(timezone.utc)),
     ])
     session.commit()
@@ -350,3 +351,180 @@ def test_batch_stop_etas_returns_empty_items_for_stops_without_data(monkeypatch)
         assert client.get("/v1/stops/9999/etas").status_code == 404
     finally:
         main_module.app.dependency_overrides.clear()
+
+
+def _freeze_time(monkeypatch, local_hour: int = 12):
+    from zoneinfo import ZoneInfo
+
+    now = datetime(2026, 11, 15, local_hour, tzinfo=ZoneInfo("Asia/Kuala_Lumpur")).astimezone(timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(predictor_module, "datetime", FrozenDateTime)
+    return now
+
+
+def test_no_arrivals_after_last_bus_even_with_parked_gps_and_ml(monkeypatch):
+    now = _freeze_time(monkeypatch, 23)
+    session = build_session()
+    stop, _ = _stop_with_trip(session, "finished", {1: 6 * 3600, 2: 22 * 3600})
+    session.add(VehicleState(lat=3.02, lon=101.71, vehicle_id="parked", trip_id="finished", current_stop_sequence=1,
+                             timestamp_unix=int(now.timestamp()), observed_at=now))
+    session.commit()
+    predictor = ETAPredictor()
+    monkeypatch.setattr(predictor, "current_model", lambda: StubModel(100))
+    assert predictor.get_stop_etas(session, stop.stop_id) == []
+
+
+def test_before_service_only_timetable_despite_parked_gps_and_ml(monkeypatch):
+    now = _freeze_time(monkeypatch, 3)
+    session = build_session()
+    stop, _ = _stop_with_trip(session, "morning", {1: 6 * 3600, 2: 7 * 3600})
+    session.add(VehicleState(lat=3.02, lon=101.71, vehicle_id="parked", trip_id="morning", current_stop_sequence=1,
+                             timestamp_unix=int(now.timestamp()), observed_at=now))
+    session.commit()
+    predictor = ETAPredictor()
+    monkeypatch.setattr(predictor, "current_model", lambda: StubModel(100))
+    items = predictor.get_stop_etas(session, stop.stop_id)
+    assert items and all(it.prediction_source == "schedule" and it.vehicle_id is None for it in items)
+    assert items[0].predicted_arrival_time.hour == 22  # 06:00 MYT, UTC previous day
+
+
+def test_delayed_bus_included_and_sorted_by_live_arrival(monkeypatch):
+    now = _freeze_time(monkeypatch)
+    session = build_session()
+    # Its scheduled arrival is already past, but this bus is still approaching.
+    stop, trip = _stop_with_trip(session, "late", {1: 11 * 3600, 2: 11 * 3600 + 600})
+    end = Stop(stop_id="end", name="End")
+    session.add(end)
+    session.flush()
+    session.add(StopTime(trip_id_ref=trip.id, stop_id_ref=end.id, stop_sequence=3, arrival_seconds=13 * 3600))
+    session.add(VehicleState(lat=3.02, lon=101.71, vehicle_id="late-bus", trip_id="late", current_stop_sequence=1,
+                             timestamp_unix=int(now.timestamp()), observed_at=now))
+    session.commit()
+    items = ETAPredictor().get_stop_etas(session, stop.stop_id)
+    assert [(it.vehicle_id, it.minutes_away) for it in items] == [("late-bus", 0), ("late-bus", 10)]
+
+
+def test_stale_gps_cannot_become_live_from_fresh_fetch(monkeypatch):
+    now = _freeze_time(monkeypatch)
+    session = build_session()
+    stop, _ = _stop_with_trip(session, "old-gps", {1: 11 * 3600, 2: 13 * 3600})
+    session.add(VehicleState(lat=3.02, lon=101.71, vehicle_id="old", trip_id="old-gps", current_stop_sequence=1,
+                             timestamp_unix=int((now - timedelta(minutes=30)).timestamp()), observed_at=now))
+    session.commit()
+    items = ETAPredictor().get_stop_etas(session, stop.stop_id)
+    assert items and all(it.prediction_source == "schedule" and it.vehicle_id is None for it in items)
+
+
+def test_latest_vehicle_position_supersedes_old_trip_and_stop_match(monkeypatch):
+    now = _freeze_time(monkeypatch)
+    session = build_session()
+    stop, _ = _stop_with_trip(session, "old-trip", {1: 11 * 3600, 2: 13 * 3600})
+    session.add_all([
+        VehicleState(lat=3.02, lon=101.71, vehicle_id="bus", trip_id="old-trip", current_stop_sequence=1,
+                     timestamp_unix=int(now.timestamp()) - 30, observed_at=now - timedelta(seconds=30)),
+        VehicleState(lat=3.02, lon=101.71, vehicle_id="bus", trip_id="new-trip", current_stop_sequence=None,
+                     timestamp_unix=int(now.timestamp()), observed_at=now),
+    ])
+    session.commit()
+    items = ETAPredictor().get_stop_etas(session, stop.stop_id)
+    assert items and all(it.vehicle_id is None for it in items)
+
+
+def test_expired_trip_update_is_not_clamped_to_now(monkeypatch):
+    now = _freeze_time(monkeypatch)
+    session = build_session()
+    stop, _ = _stop_with_trip(session, "expired", {1: 11 * 3600, 2: 13 * 3600})
+    session.add(TripUpdateState(trip_id="expired", stop_id=stop.stop_id,
+                               arrival_time_unix=int(now.timestamp()) - 60, observed_at=now))
+    session.commit()
+    assert ETAPredictor().get_stop_etas(session, stop.stop_id) == []
+
+
+def test_after_midnight_uses_previous_service_date_and_preserves_live_delay(monkeypatch):
+    from knightbus.models import ServiceCalendar
+    now = _freeze_time(monkeypatch, 0)
+    db = build_session()
+    stop, trip = _stop_with_trip(db, "night", {1: 23 * 3600 + 50 * 60, 2: 24 * 3600 + 20 * 60})
+    trip.service_id = "saturday"
+    db.add(ServiceCalendar(service_id="saturday", saturday=True, start_date="20260101", end_date="20261231"))
+    db.add(VehicleState(vehicle_id="night-bus", trip_id="night", current_stop_sequence=1,
+                        timestamp_unix=int(now.timestamp()), observed_at=now, lat=3.02, lon=101.71))
+    db.commit()
+    items = ETAPredictor().get_stop_etas(db, stop.stop_id)
+    assert len(items) == 1
+    assert items[0].scheduled_arrival_time == now + timedelta(minutes=20)
+    assert items[0].predicted_arrival_time == now + timedelta(minutes=30)
+    assert items[0].delay_seconds == 600 and items[0].vehicle_id == "night-bus"
+
+
+def test_calendars_are_scoped_to_feed_and_support_exception_only_feeds(monkeypatch):
+    from knightbus.models import CalendarDate, ServiceCalendar
+    now = _freeze_time(monkeypatch)
+    db = build_session()
+    stop, trip = _stop_with_trip(db, "sunday", {1: 13 * 3600})
+    trip.service_id = "shared"
+    db.add_all([
+        ServiceCalendar(feed_name="default", service_id="shared", sunday=False, start_date="20260101", end_date="20261231"),
+        ServiceCalendar(feed_name="other", service_id="shared", sunday=True, start_date="20260101", end_date="20261231"),
+    ])
+    db.commit()
+    assert ETAPredictor().get_stop_etas(db, stop.stop_id) == []
+    db.add(CalendarDate(feed_name="default", service_id="shared", date="20261115", exception_type=1))
+    db.commit()
+    assert ETAPredictor().get_stop_etas(db, stop.stop_id)
+    ids = ETAPredictor()._valid_service_ids(db, now, "exception-only")
+    assert ids is None
+    db.add(CalendarDate(feed_name="exception-only", service_id="special", date="20261116", exception_type=1))
+    db.commit()
+    assert ETAPredictor()._valid_service_ids(db, now, "exception-only") == set()
+
+
+def test_known_stop_with_no_arrivals_retains_metadata(monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+    from knightbus import main
+    from knightbus.db import get_db
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Stop(stop_id="quiet", name="KL123 Quiet Stop", lat=3.1, lon=101.7))
+        db.commit()
+        main.app.dependency_overrides[get_db] = lambda: db
+        monkeypatch.setattr(main.predictor, "get_stop_etas", lambda *a, **kw: [])
+        try:
+            response = TestClient(main.app).get("/v1/stops/quiet/etas")
+            assert response.status_code == 200
+            assert response.json()["items"] == [] and response.json()["stop_name"] == "Quiet Stop"
+            batch = TestClient(main.app).get("/v1/stops/etas?stop_ids=quiet").json()[0]
+            assert batch["stop_code"] == "KL123"
+        finally:
+            main.app.dependency_overrides.clear()
+
+
+def test_nearby_rejects_invalid_coordinates_and_unbounded_radius():
+    from fastapi.testclient import TestClient
+    from knightbus.main import app
+    client = TestClient(app)
+    for params in ({"lat": "nan", "lon": 101}, {"lat": 91, "lon": 101},
+                   {"lat": 3, "lon": 181}, {"lat": 3, "lon": 101, "radius_m": -1},
+                   {"lat": 3, "lon": 101, "radius_m": 1000000}):
+        assert client.get("/v1/stops/nearby", params=params).status_code == 422
+
+
+def test_recurring_overnight_trip_is_not_reported_as_two_live_buses(monkeypatch):
+    now = _freeze_time(monkeypatch, 0)
+    db = build_session()
+    stop, _ = _stop_with_trip(db, "recurring", {1: 24 * 3600, 2: 25 * 3600})
+    # This route also operates from midnight on today's service day.
+    _stop_with_trip(db, "early", {1: 0})
+    db.add(VehicleState(vehicle_id="overnight", trip_id="recurring", current_stop_sequence=1,
+                        timestamp_unix=int(now.timestamp()), observed_at=now, lat=3.02, lon=101.71))
+    db.commit()
+    items = ETAPredictor().get_stop_etas(db, stop.stop_id)
+    live = [item for item in items if item.vehicle_id == "overnight"]
+    assert [item.minutes_away for item in live] == [0, 60]

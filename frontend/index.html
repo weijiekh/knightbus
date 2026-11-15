@@ -155,10 +155,13 @@ a { color: var(--accent); }
 .chips { display: flex; gap: 8px; }
 .card-foot { min-height: 44px; display: flex; align-items: center; } /* fixed footer keeps every listing card the same height */
 .card-foot .chips { width: 100%; }
-.chip { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 12px; background: var(--surface2); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.chip { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 12px; background: var(--surface2); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 3px 6px; }
 .chip .r { font: 600 13px 'IBM Plex Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip .m { font-size: 13px; font-weight: 700; white-space: nowrap; }
 .chip .m.soon { color: var(--accent); }
+.chip-state { grid-column: 1 / -1; font-size: 10px; color: var(--text2); }
+@media (max-width: 360px) { .chip { grid-template-columns: minmax(0, 1fr); } .chip-state { grid-column: 1; } }
+.chip[data-freshness="live"] .chip-state { color: var(--accent); }
 .quiet { font-size: 13px; color: var(--text2); }
 
 /* ── STOP VIEW ── */
@@ -174,7 +177,7 @@ a { color: var(--accent); }
 .arr-top { display: flex; align-items: center; gap: 10px; }
 .route-badge { min-width: 48px; height: 32px; padding: 0 8px; border-radius: 9px; background: var(--text); color: var(--bg); font: 700 14px 'IBM Plex Mono', monospace; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .route-badge.sm { min-width: 44px; height: 30px; padding: 0 6px; border-radius: 8px; font-size: 13px; }
-.arr .dest { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arr .dest { font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .big { font-size: 30px; font-weight: 700; line-height: 1; white-space: nowrap; text-align: right; }
 .big small { font-size: 14px; font-weight: 600; }
 .big.live { color: var(--accent); }
@@ -479,13 +482,16 @@ function arrivalFreshness(item, now = Date.now()) {
 }
 function isLive(item) { return arrivalFreshness(item) === "live"; }
 function freshnessSummary(items) {
+  if (!items.length) return "No arrivals";
   const states = items.map(it => arrivalFreshness(it));
   const hasLive = states.includes("live");
   return hasLive ? (states.some(state => state !== "live") ? "Mixed freshness" : "Live")
     : states.includes("stale") ? "Stale" : states.includes("estimated") ? "Estimated" : "Timetable";
 }
 function routeLabel(item) {
-  return item.route_short_name || (item.route_long_name && item.route_long_name.length <= 10 ? item.route_long_name : null) || item.route_id || "—";
+  const short = item.route_short_name || item.short_name;
+  const long = item.route_long_name || item.long_name;
+  return short || (long && long.length <= 10 ? long : null) || item.route_id || "—";
 }
 function ago(ts) {
   if (!ts) return "";
@@ -506,7 +512,7 @@ function $(sel, root = document) { return root.querySelector(sel); }
 // Upcoming items are filtered against the user's current clock, not a possibly old API snapshot.
 function upcoming(data) {
   const now = Date.now();
-  return (data?.items || []).filter(it => !it.predicted_arrival_time || Date.parse(it.predicted_arrival_time) >= now)
+  return (data?.items || []).filter(it => Number.isFinite(Date.parse(it.predicted_arrival_time)) && Date.parse(it.predicted_arrival_time) >= now)
     .sort((a, b) => (minutesOf(a) ?? 1e9) - (minutesOf(b) ?? 1e9));
 }
 // Group by route_short_name + headsign
@@ -522,7 +528,7 @@ function groupArrivals(items) {
 // Night: nothing within 90 min and KL time 00:00–05:30
 function isNight(items) {
   const quiet = items.length === 0 || items.every(it => (minutesOf(it) ?? 1e9) >= 90);
-  return quiet && klMinutesOfDay() <= 330;
+  return quiet && items.every(it => arrivalFreshness(it) === "timetable") && klMinutesOfDay() <= 330;
 }
 function firstBusPerRoute(items) {
   const map = new Map();
@@ -689,10 +695,14 @@ function rerenderCurrentData() {
   const id = active?.id;
   const href = active?.getAttribute("href");
   const savedId = active?.closest?.(".saved-item")?.dataset.id;
+  const tripVehicle = active?.dataset.tripVehicle;
   if (S.view === "home") renderHomeBody();
   else if (S.view === "stop") renderStopBody();
   else if (S.view === "saved" && !savedDrag) drawSaved();
+  else if (S.view === "trip") renderTripBody();
+  else if (S.view === "route") drawRoute();
   const target = id ? document.getElementById(id) : href ? [...document.querySelectorAll("[href]")].find(el => el.getAttribute("href") === href)
+    : tripVehicle ? [...document.querySelectorAll("[data-trip-vehicle]")].find(el => el.dataset.tripVehicle === tripVehicle)
     : savedId ? [...document.querySelectorAll(".saved-item")].find(el => el.dataset.id === savedId)?.querySelector(".drag-handle") : null;
   target?.focus({ preventScroll: true });
 }
@@ -713,10 +723,18 @@ setInterval(() => {
     else if (el.dataset.countdownKind === "then") el.textContent = fmtArrival(item);
     else {
       el.textContent = fmtArrival(item);
-      el.classList.toggle("soon", m <= 5);
+      el.classList.toggle("soon", m <= 5 && el.closest("[data-freshness]")?.dataset.freshness === "live");
     }
   });
-  document.querySelectorAll(".arr[data-freshness]").forEach(card => {
+  document.querySelectorAll("[data-trip-countdown]").forEach(el => {
+    const text = tripEta(el.dataset.tripCountdown);
+    el.textContent = el.dataset.tripKind === "following" ? `Next bus here · ${text}` : text;
+  });
+  if (S.view === "trip" && tripState.data) {
+    const key = (tripState.data.buses || []).map(b => `${b.vehicle_id}:${busStale(b)}`).join("|");
+    if (tripState.freshnessKey !== key) needsRender = true;
+  }
+  document.querySelectorAll(".arr[data-freshness], .chip[data-freshness]").forEach(card => {
     const observed = Number(card.dataset.evidenceAt);
     if (card.dataset.freshness !== "live" || !Number.isFinite(observed) || Date.now() - observed <= LIVE_EVIDENCE_MAX_AGE_MS) return;
     needsRender = true;
@@ -724,6 +742,10 @@ setInterval(() => {
   if (S.view === "stop" && stopState.data) {
     const summary = document.querySelector("#fresh [data-freshness-summary]");
     if (summary && summary.textContent !== freshnessSummary(upcoming(stopState.data))) needsRender = true;
+  }
+  if (S.view === "route" && routeState.vehicles) {
+    const key = routeState.vehicles.map(b => `${b.vehicle_id}:${busStale(b)}`).join("|");
+    if (routeState.freshnessKey !== key) needsRender = true;
   }
   if (needsRender && !(S.view === "saved" && savedDrag)) rerenderCurrentData();
   updateOfflineText();
@@ -867,7 +889,7 @@ function renderHomeBody(opts = {}) {
     return;
   }
   body.innerHTML = head + `<p class="hint">Tap a stop for all buses and live times. Closest stop is first.</p><div class="list">${S.nearby.map((n, i) => nearbyCard(n, i)).join("")}</div>
-    <p class="key">Each box = bus route number and minutes until its next bus. Green means 5 min or less.</p>`;
+    <p class="key">Each box = bus route number and minutes until its next bus. Green means a tracked bus is due within 5 min. Timetable times are not live.</p>`;
 }
 function nearbyCard({ stop, eta }, i) {
   const { code, name } = splitStopName(stop.name);
@@ -889,7 +911,10 @@ function nearbyCard({ stop, eta }, i) {
 function arrivalChip(it) {
   const m = minutesOf(it);
   const countdown = it.predicted_arrival_time ? ` data-countdown="${esc(it.predicted_arrival_time)}"` : "";
-  return `<div class="chip"><span class="r">${esc(routeLabel(it))}</span><span class="m${m != null && m <= 5 ? " soon" : ""}"${countdown}>${esc(fmtArrival(it))}</span></div>`;
+  const freshness = arrivalFreshness(it);
+  const label = { live: "Live GPS", timetable: "Timetable", estimated: "Estimated", stale: "Old GPS" }[freshness];
+  const evidence = Number.isFinite(Date.parse(it.data_timestamp)) ? ` data-evidence-at="${Date.parse(it.data_timestamp)}"` : "";
+  return `<div class="chip" data-freshness="${freshness}"${evidence}><span class="r">${esc(routeLabel(it))}</span><span class="m${freshness === "live" && m != null && m <= 5 ? " soon" : ""}"${countdown}>${esc(fmtArrival(it))}</span><span class="chip-state">${label}</span></div>`;
 }
 let nearbySeq = 0;
 let nearbyAtKey = null;
@@ -1089,12 +1114,14 @@ function renderStop({ id }) {
   setStopView(stopState.mode);
   if (stopState.data) renderStopBody(); else loadStop(id);
 }
+let stopRequest = 0;
 async function loadStop(id, silent) {
+  const request = ++stopRequest;
   S.lastLoadAt = Date.now();
   if (!silent || !stopState.data) $("#stop-body") && ($("#stop-body").innerHTML = `<div class="skel" role="status" aria-label="Loading arrivals"><div></div><div></div><div></div></div>`);
   try {
     const data = await fetchEtas(id);
-    if (stopState.id !== id) return;
+    if (request !== stopRequest || stopState.id !== id) return;
     stopState.data = data; stopState.at = Date.now();
     const head = $(".stop-head");
     if (head && data.stop_name) {
@@ -1102,7 +1129,7 @@ async function loadStop(id, silent) {
       head.querySelector(".code").textContent = meta;
       head.querySelector("h1").textContent = name;
     }
-  } catch { /* keep last data; banner shows offline */ }
+  } catch { if (request !== stopRequest || stopState.id !== id) return; /* retain prior data */ }
   if (S.view === "stop" && currentRoute.id === id) { renderStopBody(); if (stopState.mode === "map") { drawStopMap(); renderWalkBar(); } }
 }
 function renderStopBody() {
@@ -1124,8 +1151,8 @@ function renderStopBody() {
     const firsts = firstBusPerRoute(items).slice(0, 6);
     body.innerHTML = `<div class="panel">
       <div class="night-head"><span class="night-icon">${I.moon}</span>
-        <div><div class="ptitle">Buses have stopped for tonight</div><div class="psub">Service resumes in the morning</div></div></div>
-      ${firsts.length ? `<div class="first-grid">${firsts.map(it => `<div><div class="r">${esc(routeLabel(it))}</div><div class="psub">First bus</div><div class="t">${esc(clock(it.predicted_arrival_time))}</div></div>`).join("")}</div>` : ""}
+        <div><div class="ptitle">No arrivals soon</div><div class="psub">No upcoming arrivals within 90 minutes. Check again for live updates.</div></div></div>
+      ${firsts.length ? `<div class="first-grid">${firsts.map(it => `<div><div class="r">${esc(routeLabel(it))}</div><div class="psub">Next scheduled</div><div class="t">${esc(clock(it.scheduled_arrival_time || it.predicted_arrival_time))}</div></div>`).join("")}</div>` : ""}
     </div>` + legend();
     return;
   }
@@ -1181,7 +1208,7 @@ function arrivalCard(group) {
       ${live ? '<span class="badge live">LIVE</span>' : `<span class="badge ${freshness === "stale" ? "late" : "sched"}">${stateLabel}</span>`}
       ${live ? delayBadge(first) : ""}
       ${then ? `<span class="then">${then}</span>` : (live ? "" : `<span class="sub">${freshness === "stale" ? "last bus update is old" : freshness === "estimated" ? "no fresh bus location" : "no live bus yet"}</span>`)}
-      ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}${first.vehicle_id ? "/" + encodeURIComponent(first.vehicle_id) : ""}">Follow this bus →</a>` : ""}
+      ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}${first.vehicle_id ? "/" + encodeURIComponent(first.vehicle_id) : ""}">${first.vehicle_id ? (live ? "Follow this bus →" : "View last journey →") : "View trip stops →"}</a>` : ""}
     </div>
   </div>`;
 }
@@ -1309,7 +1336,7 @@ function resultRow(r, q) {
   if (r.kind === "route") {
     const x = r.r;
     return `<a class="res" href="#/route/${encodeURIComponent(x.route_id)}" data-i>
-      <span class="route-badge sm">${esc(x.short_name || x.route_id)}</span><div class="grow"><div class="title">${highlight(titleCase((x.long_name || "").replace(/\s*~\s*/g, " ↔ ")), q)}</div>
+      <span class="route-badge sm">${esc(routeLabel(x))}</span><div class="grow"><div class="title">${highlight(titleCase((x.long_name || "").replace(/\s*~\s*/g, " ↔ ")), q)}</div>
       <div class="sub">${esc(x.feed_name || "")}</div></div></a>`;
   }
   const p = r.p;
@@ -1327,7 +1354,7 @@ function pick(r) {
     addRecent({ kind: "stop", label: r.s.code || titleCase(r.s.name), id: r.s.stop_id });
     location.hash = "#/stop/" + encodeURIComponent(r.s.stop_id);
   } else if (r.kind === "route") {
-    addRecent({ kind: "route", label: r.r.short_name || r.r.route_id, id: r.r.route_id, long_name: r.r.long_name });
+    addRecent({ kind: "route", label: routeLabel(r.r), id: r.r.route_id, long_name: r.r.long_name });
     location.hash = "#/route/" + encodeURIComponent(r.r.route_id);
   } else {
     addRecent({ kind: "place", label: r.p.name, lat: r.p.lat, lon: r.p.lon });
@@ -1368,8 +1395,10 @@ async function loadTrip(tripId) {
   renderTripBody();
 }
 function tripEta(time) {
-  const minutes = Math.ceil((Date.parse(time) - Date.now()) / 60000);
-  return Number.isFinite(minutes) && minutes >= 0 ? (minutes === 0 ? "Due" : `${minutes} min`) : "ETA unavailable";
+  const remaining = Date.parse(time) - Date.now();
+  if (!Number.isFinite(remaining) || remaining < 0) return "ETA unavailable";
+  const minutes = Math.ceil(remaining / 60000);
+  return minutes === 0 ? "Due" : `${minutes} min`;
 }
 function renderTripBody(stopId) {
   const body = $("#trip-body"), data = tripState.data;
@@ -1383,7 +1412,8 @@ function renderTripBody(stopId) {
     body.innerHTML = `<div class="panel dashed"><div class="ptitle">No stops available for this trip</div><div class="psub">Try the route map or another bus to continue your journey.</div><a class="btn out" href="#/routes">Find a route</a></div>`;
     return;
   }
-  const buses = (data.buses || []).filter(b => !busStale(b));
+  tripState.freshnessKey = (data.buses || []).map(b => `${b.vehicle_id}:${busStale(b)}`).join("|");
+  const buses = tripState.error ? [] : (data.buses || []).filter(b => !busStale(b));
   // Retain the rider's choice if GPS disappears; never silently follow another bus.
   if (!tripState.selected && buses.length) tripState.selected = buses.find(b => b.trip_id === data.trip_id)?.vehicle_id || null;
   const bus = buses.find(b => b.vehicle_id === tripState.selected);
@@ -1400,10 +1430,10 @@ function renderTripBody(stopId) {
       <div class="fresh"><span class="dot${fresh ? " live" : ""}"></span><span>${fresh ? `GPS updated <span data-ago="${Date.parse(bus.observed_at)}">${ago(Date.parse(bus.observed_at))}</span> · refreshes every 30s` : "Live position unavailable"}</span></div>
       <div class="label">${fresh ? (next ? "Coming up next" : "At the end of this route") : "Waiting for live GPS"}</div>
       <div class="next-name">${fresh ? esc(next ? nm(next) : nm(stops[idx])) : "Your bus will appear here"}</div>
-      ${fresh ? `<div class="trip-eta">${nextTime ? esc(tripEta(nextTime)) + ' <span>estimated arrival</span>' : next ? '<span>ETA unavailable</span>' : '<span>Final stop</span>'}</div><div class="now-line">Now · near ${esc(nm(stops[idx]))}</div><div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${stops.length}" aria-valuenow="${idx + 1}" aria-label="Live trip progress"><div style="width:${Math.round((idx + 1) / stops.length * 100)}%"></div></div>` : `<div class="psub">${tripState.selected ? `Bus ${esc(tripState.selected)} has no fresh, matched position.` : "No bus is reporting a fresh position for this journey."} Stop progress and arrival times will resume automatically.</div>`}
+      ${fresh ? `<div class="trip-eta">${nextTime ? `<span data-trip-countdown="${esc(nextTime)}">${esc(tripEta(nextTime))}</span> <span>estimated arrival</span>` : next ? '<span>ETA unavailable</span>' : '<span>Final stop</span>'}</div><div class="now-line">Now · near ${esc(nm(stops[idx]))}</div><div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${stops.length}" aria-valuenow="${idx + 1}" aria-label="Live trip progress"><div style="width:${Math.round((idx + 1) / stops.length * 100)}%"></div></div>` : `<div class="psub">${tripState.selected ? `Bus ${esc(tripState.selected)} has no fresh, matched position.` : "No bus is reporting a fresh position for this journey."} Stop progress and arrival times will resume automatically.</div>`}
     </div>
-    <div class="panel trip-buses"><div class="ptitle">${buses.length} live bus${buses.length === 1 ? "" : "es"} · this journey</div><div class="psub">On board? Choose your bus by its vehicle ID. Each bus follows the same stops.</div>
-      <div class="bus-choices" role="group" aria-label="Choose the bus you are on">${buses.map((b, i) => `<button type="button" class="bus-choice" data-trip-bus="${i}" aria-pressed="${b.vehicle_id === tripState.selected}"><span>Bus ${esc(b.vehicle_id)}</span><small>${b.vehicle_id === tripState.selected ? "Following" : "Follow this bus"}</small></button>`).join("")}</div>
+    <div class="panel trip-buses"><div class="ptitle">${tripState.error ? "Live buses unavailable" : `${buses.length} live bus${buses.length === 1 ? "" : "es"} · this journey`}</div><div class="psub">On board? Choose your bus by its vehicle ID. Each bus follows the same stops.</div>
+      <div class="bus-choices" role="group" aria-label="Choose the bus you are on">${buses.map((b, i) => `<button type="button" class="bus-choice" data-trip-bus="${i}" data-trip-vehicle="${esc(b.vehicle_id)}" aria-pressed="${b.vehicle_id === tripState.selected}"><span>Bus ${esc(b.vehicle_id)}</span><small>${b.vehicle_id === tripState.selected ? "Following" : "Follow this bus"}</small></button>`).join("")}</div>
       ${data.route_id ? `<a href="#/route/${encodeURIComponent(data.route_id)}">View all buses on this route →</a>` : ""}
     </div>
     <p class="hint">Arrivals are estimates from live GPS and scheduled travel times. “Next bus here” is the following bus at that same stop. Times may change with traffic.</p>
@@ -1416,8 +1446,8 @@ function renderTripBody(stopId) {
       return `${fresh && idx > 0 && i === 0 ? `<details class="trip-passed" ontoggle="tripState.passedOpen=this.open"${tripState.passedOpen ? " open" : ""}><summary>${idx} stop${idx === 1 ? "" : "s"} passed</summary>` : ""}${fresh && idx > 0 && i === idx ? "</details>" : ""}<div class="row-card trip-row${now ? " current" : ""}${passed ? " done" : ""}"${now ? ' aria-current="step"' : ""}>
         <span class="num${now ? " first" : ""}" aria-hidden="true">${passed ? "✓" : i + 1}</span>
         <div class="grow"><div class="title">${esc(nm(s))}</div><div class="sub">${passed ? "Passed" : now ? "Now · near this stop" : i === stops.length - 1 ? "Final stop" : "Upcoming"}${s.stop_code ? ` · ${esc(s.stop_code)}` : ""}</div>
-        ${following ? `<div class="next-bus">Next bus here · ${esc(tripEta(following.arrivals[s.stop_sequence]))} <span>· Bus ${esc(following.vehicle_id)}</span></div>` : fresh && i >= idx ? '<div class="sub">Next bus here · not available</div>' : ""}</div>
-        <div class="stop-time">${passed ? "" : now ? '<span class="badge sched">NOW</span>' : time ? `<strong>${esc(tripEta(time))}</strong><small>est.</small>` : '<small>ETA<br>unavailable</small>'}</div>
+        ${following ? `<div class="next-bus"><span data-trip-countdown="${esc(following.arrivals[s.stop_sequence])}" data-trip-kind="following">Next bus here · ${esc(tripEta(following.arrivals[s.stop_sequence]))}</span> <span>· Bus ${esc(following.vehicle_id)}</span></div>` : fresh && i >= idx ? '<div class="sub">Next bus here · not available</div>' : ""}</div>
+        <div class="stop-time">${passed ? "" : now ? '<span class="badge sched">NOW</span>' : time ? `<strong data-trip-countdown="${esc(time)}">${esc(tripEta(time))}</strong><small>est.</small>` : '<small>ETA<br>unavailable</small>'}</div>
       </div>`;
     }).join("")}</div>`;
   body.querySelectorAll("[data-trip-bus]").forEach(button => {
@@ -1679,7 +1709,7 @@ view.addEventListener("keydown", e => {
 let routeSearchController = null;
 let routeSearchTimer = null;
 function routeResultCard(r) {
-  return `<a class="row-card" href="#/route/${encodeURIComponent(r.route_id)}"><span class="route-badge sm">${esc(r.short_name || "Bus")}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")) || "Bus route")}</div></div>${I.chev}</a>`;
+  return `<a class="row-card" href="#/route/${encodeURIComponent(r.route_id)}"><span class="route-badge sm">${esc(routeLabel(r))}</span><div class="grow"><div class="title">${esc(titleCase((r.long_name || "").replace(/\s*~\s*/g, " ↔ ")) || "Bus route")}</div></div>${I.chev}</a>`;
 }
 function renderRoutes() {
   const routes = S.recent.filter(r => r.kind === "route");
@@ -1703,7 +1733,7 @@ async function loadRecentRouteNames(routes) {
     try {
       const meta = await apiFetch(`/v1/routes/${encodeURIComponent(recent.id)}`);
       S.routeMeta[recent.id] = meta;
-      recent.label = meta.short_name || "Bus";
+      recent.label = routeLabel(meta);
       recent.long_name = meta.long_name;
     } catch { /* Keep the last known names when offline. */ }
   }));
@@ -1733,7 +1763,7 @@ function busLabel(x) {
   if (!routeState.labels[x.vehicle_id]) routeState.labels[x.vehicle_id] = `B${Object.keys(routeState.labels).length + 1}`;
   return routeState.labels[x.vehicle_id];
 }
-function busStale(x) { return !Number.isFinite(Date.parse(x.observed_at)) || Date.now() - Date.parse(x.observed_at) > 5 * 60 * 1000; }
+function busStale(x) { const age = Date.now() - Date.parse(x.observed_at); return !Number.isFinite(age) || age < -30000 || age > LIVE_EVIDENCE_MAX_AGE_MS; }
 function busDirection(x) { return x.direction_id != null ? `direction:${x.direction_id}` : x.headsign ? `destination:${x.headsign}` : "unknown"; }
 function visibleRouteBuses() { return (routeState.vehicles || []).filter(x => routeState.direction === "all" || busDirection(x) === routeState.direction); }
 function selectRouteBus(id) {
@@ -1754,7 +1784,7 @@ function renderRoute({ id }) {
     <div class="bar"><button type="button" class="icon-btn ghost" aria-label="Back" onclick="goBack()">${I.back}</button><div style="flex:1"></div>
       <button type="button" class="icon-btn ghost" aria-label="Refresh vehicles" onclick="refreshView(true)">${I.refresh}</button></div>
     <div class="stop-head"><div class="code">Live buses on route</div>
-      <h1 id="route-heading">${meta.short_name || meta.long_name ? `<span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(meta.short_name || "Bus")}</span>${esc(long)}` : "Loading route…"}</h1>
+      <h1 id="route-heading">${meta.short_name || meta.long_name ? `<span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(routeLabel(meta))}</span>${esc(long)}` : "Loading route…"}</h1>
       <div class="fresh" id="route-fresh"></div></div>
     <div class="route-filter" id="route-directions" role="group" aria-label="Filter buses by direction"></div><div id="route-body"></div>`;
   loadRouteDetails(id);
@@ -1765,20 +1795,22 @@ async function loadRouteDetails(id) {
     const meta = await apiFetch(`/v1/routes/${encodeURIComponent(id)}`);
     S.routeMeta[id] = meta;
     if (S.view !== "route" || currentRoute.id !== id) return;
-    $("#route-heading").innerHTML = `<span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(meta.short_name || "Bus")}</span>${esc(titleCase((meta.long_name || "").replace(/\s*~\s*/g, " ↔ ")))}`;
+    $("#route-heading").innerHTML = `<span class="route-badge" style="display:inline-flex;vertical-align:middle;margin-right:10px">${esc(routeLabel(meta))}</span>${esc(titleCase((meta.long_name || "").replace(/\s*~\s*/g, " ↔ ")))}`;
     addRecent({ kind: "route", id, label: meta.short_name || meta.long_name || "Bus route", long_name: meta.long_name });
   } catch {
     if (S.view === "route" && currentRoute.id === id && !S.routeMeta[id]?.short_name && !S.routeMeta[id]?.long_name) $("#route-heading").textContent = "Bus route · name unavailable";
   }
 }
+let routeRequest = 0;
 async function loadRoute(id) {
+  const request = ++routeRequest;
   S.lastLoadAt = Date.now();
   if (!routeState.vehicles && $("#route-body")) $("#route-body").innerHTML = `<div class="skel" role="status" aria-label="Loading vehicles"><div></div><div></div></div>`;
   try {
     const v = await apiFetch(`/v1/routes/${encodeURIComponent(id)}/vehicles`);
-    if (routeState.id !== id) return;
+    if (request !== routeRequest || routeState.id !== id) return;
     routeState.vehicles = v; routeState.at = Date.now(); routeState.error = false;
-  } catch { if (routeState.id === id) routeState.error = true; }
+  } catch { if (request !== routeRequest || routeState.id !== id) return; routeState.error = true; }
   if (S.view === "route" && currentRoute.id === id) drawRoute();
 }
 let routeMarkers = null;
@@ -1831,7 +1863,7 @@ function drawRouteMap(v) {
         const many = group.length > 1;
         const lat = group.reduce((n, x) => n + x.lat, 0) / group.length;
         const lon = group.reduce((n, x) => n + x.lon, 0) / group.length;
-        const label = many ? `${group.length} buses · zoom in to separate` : `${busLabel(group[0])} · Bus ${group[0].vehicle_id}${busStale(group[0]) ? " · GPS older than 5 minutes" : ""}`;
+        const label = many ? `${group.length} buses · zoom in to separate` : `${busLabel(group[0])} · Bus ${group[0].vehicle_id}${busStale(group[0]) ? " · GPS older than 2 minutes" : ""}`;
         const marker = L.marker([lat, lon], { icon: L.divIcon({ className: "", html: `<div class="bus-pin${many ? " cluster" : ""}${group.every(busStale) ? " stale" : ""}">${many ? group.length : esc(busLabel(group[0]))}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }), title: label, alt: label }).addTo(routeMarkers);
         // Text nodes keep provider vehicle IDs safe in Leaflet popups.
         const content = document.createElement("div");
@@ -1855,6 +1887,7 @@ function drawRoute() {
   const body = $("#route-body");
   if (!body) return;
   const allVehicles = routeState.vehicles;
+  routeState.freshnessKey = (allVehicles || []).map(b => `${b.vehicle_id}:${busStale(b)}`).join("|");
   if (allVehicles && routeState.direction !== "all" && !allVehicles.some(x => busDirection(x) === routeState.direction)) routeState.direction = "all";
   const v = visibleRouteBuses();
   if (!v.some(x => x.vehicle_id === routeState.selected && x.lat != null && x.lon != null)) routeState.selected = null;
@@ -1871,7 +1904,7 @@ function drawRoute() {
   if (!$("#route-list")) { // first draw (or coming back from an empty/error state): build the shell once
     destroyRouteMap();
     body.innerHTML = `<div class="route-map-card"><div id="route-map" role="region" aria-label="Map of live buses on this route"></div></div>
-      <div class="route-map-tools"><span id="route-map-status" aria-live="polite"></span><button type="button" class="btn out" id="route-map-all" hidden>Show all buses</button><button type="button" class="btn out" id="route-map-expand" aria-expanded="false">Expand map</button></div><div class="quiet" style="margin:0 20px 12px">Faded markers: GPS older than 5 minutes. Labels match the bus cards below.</div><div id="selected-bus" aria-live="polite"></div>
+      <div class="route-map-tools"><span id="route-map-status" aria-live="polite"></span><button type="button" class="btn out" id="route-map-all" hidden>Show all buses</button><button type="button" class="btn out" id="route-map-expand" aria-expanded="false">Expand map</button></div><div class="quiet" style="margin:0 20px 12px">Faded markers: GPS older than 2 minutes. Labels match the bus cards below.</div><div id="selected-bus" aria-live="polite"></div>
       <div class="stop-section">Buses on this route</div><div class="list" id="route-list"></div>`;
   }
   $("#route-list").innerHTML = v.map((x, index) => {

@@ -218,6 +218,7 @@ class TrainingService:
             .join(Trip, VehicleState.trip_id == Trip.trip_id)
             .where(
                 VehicleState.trip_id.is_not(None),
+                VehicleState.position_source == "gtfs",
                 VehicleState.lat.is_not(None),
                 VehicleState.lon.is_not(None),
             )

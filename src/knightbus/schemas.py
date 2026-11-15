@@ -15,6 +15,7 @@ class EtaItem(BaseModel):
     scheduled_arrival_time: datetime | None = None
     minutes_away: int | None = None
     prediction_source: str
+    position_source: str | None = None
     data_timestamp: datetime
     delay_seconds: int | None = None
 
@@ -30,6 +31,7 @@ class StopEtaResponse(BaseModel):
 
 
 class VehicleResponse(BaseModel):
+    position_source: str = "gtfs"
     headsign: str | None = None
     direction_id: int | None = None
     stop_name: str | None = None

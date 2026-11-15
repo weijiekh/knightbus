@@ -45,9 +45,9 @@ def health() -> HealthResponse:
 
 @app.get("/v1/stops/nearby", response_model=list[StopResponse])
 def nearby_stops(
-    lat: float = Query(..., description="User latitude"),
-    lon: float = Query(..., description="User longitude"),
-    radius_m: float = Query(default=500.0, description="Search radius in metres"),
+    lat: float = Query(..., ge=-90, le=90, allow_inf_nan=False, description="User latitude"),
+    lon: float = Query(..., ge=-180, le=180, allow_inf_nan=False, description="User longitude"),
+    radius_m: float = Query(default=500.0, gt=0, le=5000, allow_inf_nan=False, description="Search radius in metres"),
     limit: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> list[StopResponse]:
@@ -57,8 +57,8 @@ def nearby_stops(
 @app.get("/v1/search", response_model=SearchResponse)
 def search(
     q: str = Query(default="", description="Search text (stops and routes)"),
-    lat: float | None = Query(default=None),
-    lon: float | None = Query(default=None),
+    lat: float | None = Query(default=None, ge=-90, le=90, allow_inf_nan=False),
+    lon: float | None = Query(default=None, ge=-180, le=180, allow_inf_nan=False),
     limit: int = Query(default=8, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> SearchResponse:
@@ -66,10 +66,10 @@ def search(
 
 
 def _stop_eta_response(db: Session, stop_id: str, route_id: str | None = None) -> StopEtaResponse | None:
-    items = predictor.get_stop_etas(db, stop_id=stop_id, route_id=route_id)
-    if not items:
-        return None
     stop = db.query(Stop).filter(Stop.stop_id == stop_id).first()
+    if stop is None:
+        return None
+    items = predictor.get_stop_etas(db, stop_id=stop_id, route_id=route_id)
     code, name = split_stop_name(stop.name) if stop else (None, None)
     return StopEtaResponse(
         stop_id=stop_id,

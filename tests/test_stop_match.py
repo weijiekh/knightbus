@@ -98,3 +98,19 @@ def test_vehicle_poll_bulk_inserts_and_reuses_stop_cache(monkeypatch) -> None:
     assert rows == [("B", 2), ("A", 1)]
     assert len(calls) == 1  # second poll hit the cross-poll cache
     collector_module._STOP_CANDIDATES.clear()
+
+
+def test_loop_stop_without_sequence_does_not_invent_progress():
+    db = build_session()
+    seed(db)
+    trip = db.execute(select(Trip)).scalar_one()
+    stop = db.execute(select(Stop).where(Stop.stop_id == "A")).scalar_one()
+    db.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=3))
+    db.commit()
+    assert GTFSCollector._match_nearest_stop(db, 3, 101, "static-route", {}, feed_name="mrt", trip_id="T1") is None
+
+
+def test_route_fallback_never_matches_a_foreign_feed():
+    db = build_session()
+    seed(db)
+    assert GTFSCollector._match_nearest_stop(db, 3, 101, "static-route", {}, feed_name="other") is None

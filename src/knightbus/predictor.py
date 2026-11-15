@@ -1,27 +1,28 @@
 import logging
 from math import cos, radians
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
 
-from sqlalchemy import Select, desc, select
+from sqlalchemy import Select, desc, or_, select
 from sqlalchemy.orm import Session
 
 from knightbus.config import get_settings
 from knightbus.features import build_feature_row
 from knightbus.ml import ResidualModel, load_residual_model
-from knightbus.models import CalendarDate, ModelVersion, Route, ServiceCalendar, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.models import ModelVersion, Route, Stop, StopTime, Trip, TripUpdateState, VehicleState
+from knightbus.positions import latest_position_ids
+from knightbus.service import route_windows, valid_service_ids
 from knightbus.schemas import EtaItem, ModelInfoResponse, StopResponse
 from knightbus.utils import delay_from_vehicle_progress, haversine_meters, scheduled_seconds_to_datetime
 
 logger = logging.getLogger(__name__)
 
 
-UPCOMING_GRACE_SECONDS = 120
-VEHICLE_MAX_AGE_SECONDS = 15 * 60
+VEHICLE_MAX_AGE_SECONDS = 2 * 60
 # Trip updates are re-reported every poll; older rows are stale predictions. Bounding the
 # lookup keeps it off the 14 days of history kept for training.
-TRIP_UPDATE_MAX_AGE_SECONDS = 30 * 60
+TRIP_UPDATE_MAX_AGE_SECONDS = 2 * 60
 # Calendar rows only change on a static GTFS reload (daily), so per-request lookups are wasteful.
 SERVICE_IDS_TTL_SECONDS = 10 * 60
 
@@ -33,7 +34,8 @@ class ETAPredictor:
         self._model_mtime: float | None = None
         self._ml_model: ResidualModel | None = None
         self._service_tz = settings.gtfs_service_tzinfo
-        self._service_ids_cache: tuple[str, float, set[str] | None] | None = None
+        self._service_ids_cache: dict[tuple[str | None, str], tuple[float, set[str] | None]] = {}
+        self._route_windows_cache: dict[tuple[str, str], tuple[float, dict[str, tuple[int, int]]]] = {}
         self.current_model()
 
     def current_model(self) -> ResidualModel | None:
@@ -74,31 +76,68 @@ class ETAPredictor:
         if route_id:
             query = query.where(Trip.route_id == route_id)
 
-        valid_sids = self._valid_service_ids(db, now)
-        if valid_sids is not None:
-            query = query.where(Trip.service_id.in_(valid_sids))
-
-        # Upcoming first. Past the last bus of the day the lookup falls back to
-        # the day's earliest trips, which the UI shows as "First bus".
         local_now = now.astimezone(self._service_tz)
         now_seconds = local_now.hour * 3600 + local_now.minute * 60 + local_now.second
-        schedule_rows = db.execute(
-            query.where(StopTime.arrival_seconds >= now_seconds - UPCOMING_GRACE_SECONDS).limit(25)
-        ).all()
-        if not schedule_rows:
-            schedule_rows = db.execute(query.limit(25)).all()
-        latest_updates = self._latest_trip_updates(db, stop_id, now)
-        latest_vehicles = self._latest_vehicles(db, [trip.trip_id for _, trip, _ in schedule_rows], now)
+        latest_updates = self._latest_trip_updates(db, stop_id, now, stop.feed_name)
+        latest_vehicles = self._latest_vehicles(db, now, stop.feed_name)
+        live_ids = set(latest_updates) | set(latest_vehicles)
+        schedule_rows: list[tuple[StopTime, Trip, Route | None, datetime, bool]] = []
+        # 24:xx belongs to the preceding service day, including its calendar.
+        for offset in (0, 1):
+            reference = local_now - timedelta(days=offset)
+            valid_sids = self._valid_service_ids(db, reference, stop.feed_name)
+            day_query = query
+            if valid_sids is not None:
+                day_query = day_query.where(Trip.service_id.in_(valid_sids))
+            if offset:
+                day_query = day_query.where(StopTime.arrival_seconds >= 86400)
+            day_seconds = now_seconds + offset * 86400
+            rows = db.execute(day_query.where(StopTime.arrival_seconds >= day_seconds).limit(25)).all()
+            if live_ids:
+                live_rows = db.execute(day_query.where(Trip.trip_id.in_(live_ids))).all()
+                seen = {st.id for st, _, _ in rows}
+                rows.extend(row for row in live_rows if row[0].id not in seen)
+            if not rows:
+                continue
+            key = (stop.feed_name, reference.strftime("%Y%m%d"))
+            cached = self._route_windows_cache.get(key)
+            if cached is None or monotonic() - cached[0] >= SERVICE_IDS_TTL_SECONDS:
+                if len(self._route_windows_cache) >= 16:
+                    self._route_windows_cache.clear()
+                cached = (monotonic(), route_windows(db, stop.feed_name, valid_sids))
+                self._route_windows_cache[key] = cached
+            operating = {rid for rid, (first, last) in cached[1].items() if first <= day_seconds <= last}
+            schedule_rows.extend((st, trip, route, reference, trip.route_id in operating) for st, trip, route in rows)
         # Only trips with a live bus use their full schedule (delay from progress).
         trip_schedule_seconds = self._trip_schedule_seconds(
-            db, [trip.id for _, trip, _ in schedule_rows if trip.trip_id in latest_vehicles]
+            db, [trip.id for _, trip, _, _, operating in schedule_rows if operating and trip.trip_id in latest_vehicles]
         )
 
-        items: list[EtaItem] = []
-        for stop_time, trip, route in schedule_rows:
-            scheduled_arrival = scheduled_seconds_to_datetime(now, stop_time.arrival_seconds, self._service_tz)
-            trip_update = latest_updates.get(trip.trip_id)
+        # A recurring trip_id can exist on both sides of midnight. Associate
+        # realtime evidence with one service day, rather than showing one bus twice.
+        live_days: dict[int, tuple[float, date]] = {}
+        for st, trip, _, reference, operating in schedule_rows:
+            if not operating or trip.trip_id not in live_ids:
+                continue
             vehicle = latest_vehicles.get(trip.trip_id)
+            delay = delay_from_vehicle_progress(
+                now, vehicle, trip_schedule_seconds.get(trip.id, {}), reference, self._service_tz,
+            ) if vehicle else None
+            scheduled = scheduled_seconds_to_datetime(reference, st.arrival_seconds, self._service_tz)
+            if scheduled is None:
+                continue
+            update = latest_updates.get(trip.trip_id)
+            target = datetime.fromtimestamp(update.arrival_time_unix, timezone.utc) if update and update.arrival_time_unix else now
+            score = abs(delay) if delay is not None else abs((scheduled - target).total_seconds())
+            if trip.id not in live_days or score < live_days[trip.id][0]:
+                live_days[trip.id] = (score, reference.date())
+
+        items: list[EtaItem] = []
+        for stop_time, trip, route, reference, operating in schedule_rows:
+            scheduled_arrival = scheduled_seconds_to_datetime(reference, stop_time.arrival_seconds, self._service_tz)
+            has_live = operating and trip.id in live_days and live_days[trip.id][1] == reference.date()
+            trip_update = latest_updates.get(trip.trip_id) if has_live else None
+            vehicle = latest_vehicles.get(trip.trip_id) if has_live else None
             if (
                 vehicle is not None
                 and vehicle.current_stop_sequence is not None
@@ -112,6 +151,8 @@ class ETAPredictor:
                     now=now,
                     vehicle=vehicle,
                     trip_schedule_seconds=trip_schedule_seconds.get(trip.id, {}),
+                    service_reference=reference,
+                    service_tz=self._service_tz,
                 )
 
             if trip_update and trip_update.arrival_time_unix:
@@ -132,6 +173,10 @@ class ETAPredictor:
             if (
                 predicted_arrival
                 and ml_model is not None
+                and reference.date() == local_now.date()
+                and delay_seconds is not None
+                and (vehicle is None or vehicle.position_source != "kiosk")
+                and predicted_arrival >= now
                 and not (trip_update and trip_update.arrival_time_unix)
             ):
                 feature_row = build_feature_row(
@@ -148,9 +193,22 @@ class ETAPredictor:
                     predicted_arrival = now + timedelta(seconds=adjusted_seconds)
                     source = "ml_residual"
 
+            # Never clamp an expired prediction to a fictitious "Now" arrival.
+            if predicted_arrival is None or predicted_arrival < now:
+                continue
+
             minutes_away = None
             if predicted_arrival:
                 minutes_away = max(0, int((predicted_arrival - now).total_seconds() // 60))
+
+            data_timestamp = now
+            if trip_update:
+                data_timestamp = trip_update.observed_at
+            elif vehicle:
+                data_timestamp = (
+                    datetime.fromtimestamp(vehicle.timestamp_unix, timezone.utc)
+                    if vehicle.timestamp_unix is not None else vehicle.observed_at
+                )
 
             items.append(
                 EtaItem(
@@ -165,12 +223,13 @@ class ETAPredictor:
                     scheduled_arrival_time=scheduled_arrival,
                     minutes_away=minutes_away,
                     prediction_source=source,
-                    data_timestamp=(trip_update.observed_at if trip_update else vehicle.observed_at if vehicle else now),
+                    position_source=vehicle.position_source if vehicle else ("gtfs" if trip_update else None),
+                    data_timestamp=data_timestamp,
                     delay_seconds=delay_seconds,
                 )
             )
 
-        return [item for item in items if item.predicted_arrival_time is not None][:10]
+        return sorted(items, key=lambda item: item.predicted_arrival_time)[:10]
 
     def list_route_vehicles(self, db: Session, route_id: str) -> list[VehicleState]:
         query = (
@@ -181,49 +240,22 @@ class ETAPredictor:
         )
         return list(db.execute(query).scalars().all())
 
-    def _valid_service_ids(self, db: Session, now: datetime) -> set[str] | None:
-        """Return service_ids valid for today, or None if no calendar data exists."""
-        local_now = now.astimezone(self._service_tz)
-        today_str = local_now.strftime("%Y%m%d")
-        day_col = local_now.strftime("%A").lower()  # e.g. "monday"
-
-        cached = self._service_ids_cache
-        if cached is not None and cached[0] == today_str and monotonic() - cached[1] < SERVICE_IDS_TTL_SECONDS:
-            return cached[2]
-        valid_ids = self._load_valid_service_ids(db, today_str, day_col)
-        self._service_ids_cache = (today_str, monotonic(), valid_ids)
-        return valid_ids
+    def _valid_service_ids(self, db: Session, now: datetime, feed_name: str | None = None) -> set[str] | None:
+        local = now.astimezone(self._service_tz)
+        date = local.strftime("%Y%m%d")
+        key = (feed_name, date)
+        cached = self._service_ids_cache.get(key)
+        if cached is not None and monotonic() - cached[0] < SERVICE_IDS_TTL_SECONDS:
+            return cached[1]
+        ids = self._load_valid_service_ids(db, date, feed_name)
+        if len(self._service_ids_cache) >= 16:
+            self._service_ids_cache.clear()
+        self._service_ids_cache[key] = (monotonic(), ids)
+        return ids
 
     @staticmethod
-    def _load_valid_service_ids(db: Session, today_str: str, day_col: str) -> set[str] | None:
-        # Check if any calendar data exists
-        has_calendar = db.execute(select(ServiceCalendar).limit(1)).scalars().first()
-        if has_calendar is None:
-            return None
-
-        day_filter = getattr(ServiceCalendar, day_col) == True  # noqa: E712
-        rows = db.execute(
-            select(ServiceCalendar.service_id).where(
-                day_filter,
-                ServiceCalendar.start_date <= today_str,
-                ServiceCalendar.end_date >= today_str,
-            )
-        ).scalars().all()
-        valid = set(rows)
-
-        # Apply calendar_dates exceptions
-        exceptions = db.execute(
-            select(CalendarDate.service_id, CalendarDate.exception_type).where(
-                CalendarDate.date == today_str
-            )
-        ).all()
-        for service_id, exception_type in exceptions:
-            if exception_type == 1:
-                valid.add(service_id)
-            elif exception_type == 2:
-                valid.discard(service_id)
-
-        return valid
+    def _load_valid_service_ids(db: Session, date: str, feed_name: str | None = None) -> set[str] | None:
+        return valid_service_ids(db, datetime.strptime(date, "%Y%m%d"), feed_name)
 
     def get_nearby_stops(
         self, db: Session, lat: float, lon: float, radius_m: float = 500.0, limit: int = 5
@@ -259,12 +291,14 @@ class ETAPredictor:
         return ModelInfoResponse(version=version.version, status=version.status, metrics_json=version.metrics_json)
 
     @staticmethod
-    def _latest_trip_updates(db: Session, stop_id: str, now: datetime) -> dict[str, TripUpdateState]:
+    def _latest_trip_updates(db: Session, stop_id: str, now: datetime, feed_name: str) -> dict[str, TripUpdateState]:
         rows = (
             db.execute(
                 select(TripUpdateState)
                 .where(
                     TripUpdateState.stop_id == stop_id,
+                    or_(TripUpdateState.feed_name == feed_name, TripUpdateState.feed_name.is_(None)),
+                    TripUpdateState.observed_at <= now + timedelta(seconds=30),
                     TripUpdateState.observed_at >= now - timedelta(seconds=TRIP_UPDATE_MAX_AGE_SECONDS),
                 )
                 .order_by(desc(TripUpdateState.observed_at))
@@ -279,28 +313,22 @@ class ETAPredictor:
         return latest
 
     @staticmethod
-    def _latest_vehicles(db: Session, trip_ids: list[str], now: datetime) -> dict[str, VehicleState]:
-        """Latest stop-matched position of each trip's bus, wherever it is on the route."""
-        if not trip_ids:
-            return {}
-        rows = (
-            db.execute(
-                select(VehicleState)
-                .where(
-                    VehicleState.trip_id.in_(trip_ids),
-                    VehicleState.current_stop_sequence.is_not(None),
-                    VehicleState.observed_at >= now - timedelta(seconds=VEHICLE_MAX_AGE_SECONDS),
-                )
-                .order_by(desc(VehicleState.observed_at))
-                .limit(500)
+    def _latest_vehicles(db: Session, now: datetime, feed_name: str) -> dict[str, VehicleState]:
+        """Rank before matching trips, so old trips/stop matches cannot reappear."""
+        rows = db.execute(
+            select(VehicleState)
+            .where(
+                VehicleState.id.in_(latest_position_ids(now, VEHICLE_MAX_AGE_SECONDS)),
+                or_(VehicleState.feed_name == feed_name, VehicleState.feed_name.is_(None)),
+                VehicleState.current_stop_sequence.is_not(None),
             )
-            .scalars()
-            .all()
-        )
-        latest: dict[str, VehicleState] = {}
+            .order_by(desc(VehicleState.timestamp_unix), desc(VehicleState.observed_at))
+        ).scalars().all()
+        result: dict[str, VehicleState] = {}
         for row in rows:
-            latest.setdefault(row.trip_id, row)
-        return latest
+            if row.trip_id:
+                result.setdefault(row.trip_id, row)
+        return result
 
     @staticmethod
     def _trip_schedule_seconds(db: Session, trip_ids: list[int]) -> dict[int, dict[int, int | None]]:
