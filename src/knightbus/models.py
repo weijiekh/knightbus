@@ -137,6 +137,7 @@ class VehicleState(Base):
     # Only trip_id, route_id and observed_at are queried; every extra index on
     # this hot insert table costs cache and write memory.
     feed_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    position_source: Mapped[str] = mapped_column(String(16), default="gtfs", server_default="gtfs")
     vehicle_id: Mapped[str] = mapped_column(String(128))
     trip_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
     route_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)

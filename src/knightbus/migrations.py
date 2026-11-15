@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, inspect, text
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,11 @@ MIGRATIONS: tuple[str, ...] = (
 
 def apply_migrations(engine: Engine) -> None:
     with engine.begin() as conn:
+        inspector = inspect(conn)
+        if inspector.has_table("vehicle_states") and "position_source" not in {
+            col["name"] for col in inspector.get_columns("vehicle_states")
+        }:
+            conn.execute(text("ALTER TABLE vehicle_states ADD COLUMN position_source VARCHAR(16) NOT NULL DEFAULT 'gtfs'"))
         for statement in MIGRATIONS:
             conn.execute(text(statement))
     logger.info("applied schema migrations", extra={"count": len(MIGRATIONS)})

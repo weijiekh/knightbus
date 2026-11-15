@@ -221,6 +221,7 @@ class GTFSCollector:
             select(VehicleState.vehicle_id, func.max(VehicleState.timestamp_unix))
             .where(
                 VehicleState.feed_name == feed_name,
+                VehicleState.position_source == "gtfs",
                 VehicleState.observed_at >= since,
                 VehicleState.timestamp_unix.is_not(None),
             )

@@ -59,7 +59,7 @@ def _live_session():
         ('opposite', 'reverse', 10, 10, 'default'), ('stale', 't', 10, 301, 'default'),
         ('foreign', 't', 10, 10, 'other'), ('unknown', 't', 999, 10, 'default'),
     ]:
-        db.add(VehicleState(feed_name=feed, vehicle_id=vehicle, route_id='r', trip_id=tid, current_stop_sequence=seq, observed_at=now-timedelta(seconds=age)))
+        db.add(VehicleState(lat=3.02, lon=101.71, feed_name=feed, vehicle_id=vehicle, route_id='r', trip_id=tid, current_stop_sequence=seq, observed_at=now-timedelta(seconds=age)))
     db.commit()
     return db
 
@@ -98,7 +98,7 @@ def test_journey_does_not_guess_repeated_loop_stop_without_sequence():
     trip = db.query(Trip).filter_by(trip_id='t').one()
     stop = db.query(Stop).filter_by(stop_id='s0').one()
     db.add(StopTime(trip_id_ref=trip.id, stop_id_ref=stop.id, stop_sequence=50, arrival_seconds=37000))
-    db.add(VehicleState(feed_name='default', vehicle_id='loop', route_id='r', trip_id='t', stop_id='s0', observed_at=datetime.now(timezone.utc)))
+    db.add(VehicleState(lat=3.02, lon=101.71, feed_name='default', vehicle_id='loop', route_id='r', trip_id='t', stop_id='s0', observed_at=datetime.now(timezone.utc)))
     db.commit()
     bus = next(b for b in get_trip_journey(db, 't').buses if b.vehicle_id == 'loop')
     assert bus.current_stop_sequence is None

@@ -72,4 +72,6 @@ def delay_from_vehicle_progress(
         if vehicle.timestamp_unix is not None
         else vehicle.observed_at
     )
+    if observed_time.tzinfo is None:
+        observed_time = observed_time.replace(tzinfo=timezone.utc)
     return int((observed_time - scheduled_current_time).total_seconds())

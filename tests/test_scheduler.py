@@ -237,3 +237,48 @@ def test_refresh_static_only_missing_skips_loaded_feeds(monkeypatch) -> None:
     scheduler.refresh_static(only_missing=True)
 
     assert fetched == ["penang"]
+
+
+@pytest.mark.parametrize("mode", ["disabled", "shadow", "supplement"])
+def test_kiosk_polled_once_per_cycle_and_isolated_from_gtfs_failures(monkeypatch, mode):
+    from knightbus.config import FeedConfig
+
+    cfg = build_settings(KIOSK_AVL_MODE=mode, GTFS_FEEDS=[FeedConfig(name="one"), FeedConfig(name="two")])
+    calls = []
+    monkeypatch.setattr(scheduler, "get_settings", lambda: cfg)
+    monkeypatch.setattr(scheduler, "should_run_realtime_poll", lambda **kwargs: True)
+    def poll(feed, label):
+        calls.append(feed.name)
+        if feed.name == "one":
+            raise RuntimeError("GTFS unavailable")
+    monkeypatch.setattr(scheduler, "_poll_gtfs_feed", poll)
+    class Kiosk:
+        def __init__(self, settings):
+            pass
+        def fetch(self):
+            calls.append("kiosk")
+            raise ValueError("HTML bot check, not JSON")
+    monkeypatch.setattr(scheduler, "KioskCollector", Kiosk)
+    scheduler.poll_realtime(active_hours=True, poll_label="test")
+    assert calls == (["one", "two"] if mode == "disabled" else ["one", "two", "kiosk"])
+
+
+def test_kiosk_shadow_reaches_collection_after_gtfs_poll(monkeypatch):
+    cfg = build_settings(KIOSK_AVL_MODE="shadow")
+    calls = []
+    monkeypatch.setattr(scheduler, "get_settings", lambda: cfg)
+    monkeypatch.setattr(scheduler, "should_run_realtime_poll", lambda **kwargs: True)
+    monkeypatch.setattr(scheduler, "_poll_gtfs_feed", lambda *args: calls.append("gtfs"))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: nullcontext("db"))
+    class Kiosk:
+        def __init__(self, settings):
+            pass
+        def fetch(self):
+            calls.append("fetch")
+            return "payload"
+        def collect(self, db, payload):
+            assert (db, payload) == ("db", "payload")
+            calls.append("collect")
+    monkeypatch.setattr(scheduler, "KioskCollector", Kiosk)
+    scheduler.poll_realtime(active_hours=True, poll_label="test")
+    assert calls == ["gtfs", "fetch", "collect"]

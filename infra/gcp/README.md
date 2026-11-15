@@ -151,3 +151,42 @@ If the VM is stopped and gets a new external IP, update `DOMAIN`, remove
 `/etc/nginx/sites-available/knightbus`, re-run `bootstrap.sh` (new nginx
 `server_name` and cert), update the Pages `API_ORIGIN`
 and the `DEPLOY_HOST` and `VM_HOST` secrets. Or reserve a static IP.
+
+## Optional kiosk GPS supplement
+
+The scheduler can fetch the RapidKL kiosk regional AVL snapshot alongside GTFS.
+It uses the existing realtime polling cadence (normally 30 seconds during service,
+900 seconds overnight), with one regional request per cycle, not per route/user.
+No browser, cookies, websocket client, or extra service is required in production.
+
+Set `KIOSK_AVL_MODE` in `infra/gcp/.env` and recreate the API container to apply:
+
+- `disabled` (default): no kiosk requests; ignore previously stored kiosk positions.
+- `shadow`: fetch/validate and log coverage comparisons without storing kiosk positions
+  or changing API arrivals. Run for at least one full service day before enabling.
+- `supplement`: store validated kiosk GPS alongside GTFS; select each bus's newest
+  valid observation by GPS timestamp, preferring GTFS when timestamps are equal.
+
+`KIOSK_AVL_URL` defaults to
+`https://myrapidbus.prasarana.com.my/avl/api/avl/region/rkl`. Only configured feeds
+named `rapid-bus-kl` and `rapid-bus-mrtfeeder` are eligible for this RKL snapshot.
+Shadow logs include `valid`, `mapped`, `additional`, `newer`, and `inserted` counts.
+`additional` means no valid, recent GTFS observation was available for that bus;
+`newer` means kiosk GPS was newer than a valid GTFS observation. The collectors
+remain independent: HTTP failures, bot-check HTML, and malformed snapshots are
+logged and do not prevent subsequent polling of either source. There is no
+runtime CAPTCHA bypass or retry loop.
+
+Raw kiosk staff identifiers and payloads are not stored. Stored position rows
+carry `position_source=kiosk`; vehicle and stop ETA responses expose provenance.
+Kiosk rows use the existing realtime retention policy and are excluded from ML
+training until validated; kiosk-backed ETAs use schedule progress without ML adjustment. Operational route codes map only to unambiguous static
+routes. Unknown trips can appear on the map; ETA progress requires an exact static
+trip and an unambiguous stop match within 200m. Route codes alone never determine
+direction or fabricate trip IDs. GPS older than two minutes, future GPS more than
+30 seconds ahead, nonfinite/out-of-range coordinates, and `(0, 0)` are rejected.
+
+The source is an undocumented kiosk endpoint; its observed availability is not a
+service guarantee. Keep GTFS enabled. If the endpoint changes or blocks requests,
+set `KIOSK_AVL_MODE=disabled` and recreate the API container. Existing kiosk rows
+are immediately excluded from API lookups after restart, without deleting data.

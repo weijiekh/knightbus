@@ -8,7 +8,8 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from knightbus.collector import GTFSCollector
-from knightbus.config import Settings, get_settings
+from knightbus.config import FeedConfig, Settings, get_settings
+from knightbus.kiosk import KioskCollector
 from knightbus.db import Base, SessionLocal, engine
 from knightbus.etl import ETLService
 from knightbus.logging import configure_logging
@@ -55,21 +56,37 @@ def poll_realtime(*, active_hours: bool, poll_label: str) -> None:
         return
 
     for feed in settings.resolved_feeds:
-        collector = GTFSCollector(feed)
-        with SessionLocal() as db:
-            vehicle_payload = collector.fetch_vehicle_positions()
-            if vehicle_payload:
-                inserted = collector.normalize_vehicle_positions(db, vehicle_payload)
-                logger.info("stored vehicle positions", extra={"feed": feed.name, "inserted": inserted, "poll_label": poll_label})
-            else:
-                logger.info("skipping vehicle position poll because no URL is configured", extra={"feed": feed.name, "poll_label": poll_label})
+        try:
+            _poll_gtfs_feed(feed, poll_label)
+        except Exception:
+            logger.exception("GTFS realtime poll failed", extra={"feed": feed.name})
+    if settings.kiosk_avl_mode != "disabled":
+        try:
+            collector = KioskCollector(settings)
+            payload = collector.fetch()
+            with SessionLocal() as db:
+                collector.collect(db, payload)
+        except Exception:
+            # Kiosk errors (including HTML bot checks) never interrupt GTFS polling.
+            logger.exception("kiosk AVL poll failed; retaining GTFS fallback")
 
-            trip_payload = collector.fetch_trip_updates()
-            if trip_payload:
-                inserted = collector.normalize_trip_updates(db, trip_payload)
-                logger.info("stored trip updates", extra={"feed": feed.name, "inserted": inserted, "poll_label": poll_label})
-            else:
-                logger.info("skipping trip updates poll because no URL is configured", extra={"feed": feed.name, "poll_label": poll_label})
+
+def _poll_gtfs_feed(feed: FeedConfig, poll_label: str) -> None:
+    collector = GTFSCollector(feed)
+    with SessionLocal() as db:
+        vehicle_payload = collector.fetch_vehicle_positions()
+        if vehicle_payload:
+            inserted = collector.normalize_vehicle_positions(db, vehicle_payload)
+            logger.info("stored vehicle positions", extra={"feed": feed.name, "inserted": inserted, "poll_label": poll_label})
+        else:
+            logger.info("skipping vehicle position poll because no URL is configured", extra={"feed": feed.name, "poll_label": poll_label})
+
+        trip_payload = collector.fetch_trip_updates()
+        if trip_payload:
+            inserted = collector.normalize_trip_updates(db, trip_payload)
+            logger.info("stored trip updates", extra={"feed": feed.name, "inserted": inserted, "poll_label": poll_label})
+        else:
+            logger.info("skipping trip updates poll because no URL is configured", extra={"feed": feed.name, "poll_label": poll_label})
 
 
 def poll_realtime_active_hours() -> None:

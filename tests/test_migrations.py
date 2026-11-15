@@ -49,3 +49,16 @@ def test_migrations_replace_trip_update_stop_index() -> None:
         names = conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).scalars().all()
     assert "ix_trip_update_states_stop_id" not in names
     assert "ix_trip_updates_stop_recent" in names
+
+
+def test_position_source_is_backfilled_on_existing_history():
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE vehicle_states (vehicle_id TEXT)"))
+        conn.execute(text("INSERT INTO vehicle_states (vehicle_id) VALUES ('old')"))
+        conn.execute(text("CREATE TABLE stops (lat REAL, lon REAL)"))
+        conn.execute(text("CREATE TABLE trip_update_states (stop_id TEXT, observed_at TEXT)"))
+    apply_migrations(engine)
+    apply_migrations(engine)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT position_source FROM vehicle_states")).scalar_one() == "gtfs"
