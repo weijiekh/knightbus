@@ -213,3 +213,23 @@ test("a location change while ETA refresh is pending cannot update nearby state"
   assert.equal(context.S.nearby, null);
   assert.equal(context.S.nearbyAt, 0);
 });
+
+function stopFixture() {
+  const ctx = vm.createContext({
+    S: { view: "stop" }, stopState: { id: "s", data: { marker: "cached" } }, currentRoute: { id: "s" }, Date,
+    $: () => null, fetchEtas: async () => ({}), renderStopBody() {},
+  });
+  vm.runInContext(source("let stopRequest = 0;", "function renderStopBody()"), ctx);
+  return ctx;
+}
+
+test("overlapping stop refreshes cannot replace the latest response", async () => {
+  const ctx = stopFixture(), old = deferred();
+  let calls = 0;
+  ctx.fetchEtas = () => ++calls === 1 ? old.promise : Promise.resolve({ marker: "new" });
+  const first = vm.runInContext('loadStop("s", true)', ctx);
+  await vm.runInContext('loadStop("s", true)', ctx);
+  old.resolve({ marker: "old" });
+  await first;
+  assert.equal(ctx.stopState.data.marker, "new");
+});

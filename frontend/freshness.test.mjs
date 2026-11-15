@@ -161,3 +161,63 @@ test("merged arrival footer keeps sibling countdown markup and escapes provider 
   assert.match(card, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(card, /<img/);
 });
+
+test("nearby and saved chips label evidence and reserve green urgency for live GPS", () => {
+  const ctx = context(Date.parse("2026-11-04T00:00:00Z"));
+  const chip = item => {
+    ctx.item = { route_short_name: "190", predicted_arrival_time: "2026-11-04T00:03:00Z", ...item };
+    return vm.runInContext("arrivalChip(item)", ctx);
+  };
+  const timetable = chip({ prediction_source: "schedule" });
+  assert.match(timetable, />Timetable</);
+  assert.doesNotMatch(timetable, /class="m soon"/);
+  const live = chip({ prediction_source: "heuristic", vehicle_id: "v", data_timestamp: "2026-11-03T23:59:30Z" });
+  assert.match(live, />Live GPS</);
+  assert.match(live, /class="m soon"/);
+  const stale = chip({ prediction_source: "heuristic", vehicle_id: "v", data_timestamp: "2026-11-03T23:55:00Z" });
+  assert.match(stale, />Old GPS</);
+  assert.doesNotMatch(stale, /class="m soon"/);
+});
+
+test("missing or invalid arrival times cannot appear as upcoming buses", () => {
+  const ctx = context();
+  ctx.data = { items: [{}, { predicted_arrival_time: "not a date" }, { predicted_arrival_time: null }] };
+  assert.equal(vm.runInContext("upcoming(data).length", ctx), 0);
+  assert.equal(vm.runInContext("freshnessSummary(upcoming(data))", ctx), "No arrivals");
+});
+
+test("night presentation does not suppress a tracked bus or claim timetable service has ended", () => {
+  const ctx = context();
+  ctx.klMinutesOfDay = () => 120;
+  vm.runInContext(section("function isNight(items)", "function delayBadge(item)"), ctx);
+  ctx.items = [{ prediction_source: "heuristic", vehicle_id: "v", data_timestamp: new Date().toISOString(), predicted_arrival_time: new Date(Date.now()+3*3600000).toISOString() }];
+  assert.equal(vm.runInContext("isNight(items)", ctx), false);
+  ctx.items[0].prediction_source = "schedule";
+  assert.equal(vm.runInContext("isNight(items)", ctx), true);
+  assert.doesNotMatch(html, /Buses have stopped for tonight|Service resumes in the morning|>First bus</);
+});
+
+test("journey countdown ticks update text without rebuilding the trip screen", () => {
+  const now = Date.parse("2026-11-04T00:00:00Z"), ctx = context(now);
+  let tick, renders = 0;
+  const countdown = { dataset: { tripCountdown: "2026-11-04T00:01:00Z" }, textContent: "" };
+  ctx.document = {
+    visibilityState: "visible", activeElement: null,
+    querySelectorAll: selector => selector === "[data-trip-countdown]" ? [countdown] : [],
+    getElementById: () => null,
+  };
+  ctx.S = { view: "trip", lastLoadAt: 0 };
+  ctx.tripState = { data: { buses: [] }, freshnessKey: "" };
+  ctx.renderTripBody = () => { renders++; };
+  ctx.updateOfflineText = () => {};
+  ctx.refreshView = () => {};
+  ctx.setInterval = callback => { tick = callback; };
+  vm.runInContext(section("function tripEta(time)", "function renderTripBody(stopId)"), ctx);
+  vm.runInContext(section("function rerenderCurrentData()", "document.addEventListener(\"visibilitychange\""), ctx);
+  tick();
+  assert.equal(countdown.textContent, "1 min");
+  ctx.Date.now = () => now + 61000;
+  tick();
+  assert.equal(countdown.textContent, "ETA unavailable");
+  assert.equal(renders, 0);
+});

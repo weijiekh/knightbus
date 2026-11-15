@@ -19,7 +19,8 @@ function setup() {
     const marker = { coords, options, addTo() { markers.push(this); return this; }, bindPopup() { return this; }, on() { return this; }, openPopup() { return this; } };
     return marker;
   }};
-  const ctx = vm.createContext({ $, window: { L }, L, document: { createElement: () => ({}) }, whenLeaflet: f => f(), S: {}, esc: x => String(x ?? ''), titleCase: String, I: { busLine: '', empty: '' }, ago: () => 'just now', stopDisplay: id => ({ name: id }) });
+  const ctx = vm.createContext({ $, window: { L }, L, document: { createElement: () => ({}) }, whenLeaflet: f => f(), S: {}, LIVE_EVIDENCE_MAX_AGE_MS: 120000, esc: x => String(x ?? ''), titleCase: String, I: { busLine: '', empty: '' }, ago: () => 'just now', stopDisplay: id => ({ name: id }) });
+  vm.runInContext(html.slice(html.indexOf("function routeLabel(item)"), html.indexOf("function ago(ts)")), ctx);
   vm.runInContext(source, ctx);
   ctx.fakeMap = map;
   ctx.fakeMarkers = { clearLayers() { markers = []; } };
@@ -138,10 +139,40 @@ test('recent routes replace cached internal IDs with public route names', async 
     apiFetch:async()=>({route_id:recent.id,short_name:'190',long_name:'A ~ B'}),
     save(){},esc:String,titleCase:String,I:{chev:''},
   });
+  vm.runInContext(html.slice(html.indexOf('function routeLabel(item)'),html.indexOf('function ago(ts)')),ctx);
   vm.runInContext(html.slice(html.indexOf('function routeResultCard'),html.indexOf('async function searchRoutes')),ctx);
   await vm.runInContext('loadRecentRouteNames(S.recent)',ctx);
   assert.equal(recent.label,'190');
   assert.match(element.innerHTML,/>190</);
   assert.match(element.innerHTML,/A ↔ B/);
   assert.doesNotMatch(element.innerHTML,/>internal-r190</);
+});
+
+test('future GPS and positions older than two minutes cannot be marked live', () => {
+  const {ctx,run}=setup();
+  ctx.bus={observed_at:new Date(Date.now()+60000).toISOString()};
+  assert.equal(run('busStale(bus)'),true);
+  ctx.bus.observed_at=new Date(Date.now()-121000).toISOString();
+  assert.equal(run('busStale(bus)'),true);
+});
+
+test('overlapping route refreshes retain the newest vehicle response', async () => {
+  const {ctx,run}=setup();
+  ctx.S.view='other';
+  run('routeState.id="r"');
+  let resolve;
+  const old=new Promise(done=>{resolve=done;});
+  let calls=0;
+  ctx.apiFetch=()=>++calls===1?old:Promise.resolve([{vehicle_id:'new'}]);
+  const first=run('loadRoute("r")');
+  await run('loadRoute("r")');
+  resolve([{vehicle_id:'old'}]);
+  await first;
+  assert.equal(run('routeState.vehicles[0].vehicle_id'),'new');
+});
+
+test('public route codes in long_name are shown instead of internal IDs', () => {
+  const {ctx,run}=setup();
+  ctx.item={route_id:'30000174',short_name:'',long_name:'T565'};
+  assert.equal(run('routeLabel(item)'),'T565');
 });
