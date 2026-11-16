@@ -122,7 +122,7 @@ def test_route_details_returns_public_names_for_direct_links():
 def test_journey_keeps_gps_but_suppresses_estimates_outside_route_hours(monkeypatch):
     from datetime import datetime, timezone
     from knightbus import trips
-    from knightbus.schemas import VehicleResponse
+    from knightbus.models import VehicleState
     db = _live_session()
     # Existing fixture schedules are around the real local clock; move the
     # simulated observation twelve hours away from that service span.
@@ -133,9 +133,9 @@ def test_journey_keeps_gps_but_suppresses_estimates_outside_route_hours(monkeypa
         def now(cls, tz=None):
             return now.astimezone(tz)
     monkeypatch.setattr(trips, "datetime", FrozenDateTime)
-    monkeypatch.setattr(trips, "route_vehicles", lambda *a, **kw: [VehicleResponse(
-        vehicle_id="parked", route_id="r", trip_id="t", current_stop_sequence=20, observed_at=now,
-    )])
+    monkeypatch.setattr(trips, "route_vehicle_rows", lambda *a, **kw: [(VehicleState(
+        vehicle_id="parked", route_id="r", trip_id="t", current_stop_sequence=20, observed_at=now, position_source="gtfs",
+    ), None, None, None)])
     bus = trips.get_trip_journey(db, "t").buses[0]
     assert bus.current_stop_sequence == 20
     assert bus.arrivals == {}

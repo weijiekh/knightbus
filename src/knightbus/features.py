@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from knightbus.config import get_settings
 from knightbus.models import Stop, StopTime, Trip, VehicleState
@@ -73,7 +73,10 @@ def build_feature_row(
 
     vehicle_time_since_update_seconds = None
     if vehicle is not None:
-        vehicle_time_since_update_seconds = int((now - vehicle.observed_at).total_seconds())
+        observed = vehicle.observed_at
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        vehicle_time_since_update_seconds = int((now - observed).total_seconds())
 
     features = {
         "route_id": trip.route_id,

@@ -458,7 +458,7 @@ function clock(iso) { return iso ? clockFmt.format(new Date(iso)) : "—"; }
 function minutesOf(item) {
   if (!item?.predicted_arrival_time) return null;
   const arrival = Date.parse(item.predicted_arrival_time);
-  return Number.isFinite(arrival) ? Math.floor((arrival - Date.now()) / 60000) : null;
+  return Number.isFinite(arrival) ? Math.ceil((arrival - Date.now()) / 60000) : null;
 }
 // ≤0 → "Now"; 1–59 → "N min"; ≥60 → clock time in KL
 function fmtArrival(item) {
@@ -1207,6 +1207,7 @@ function arrivalCard(group) {
     <div class="arr-bot">
       ${live ? '<span class="badge live">LIVE</span>' : `<span class="badge ${freshness === "stale" ? "late" : "sched"}">${stateLabel}</span>`}
       ${live ? delayBadge(first) : ""}
+      ${first.vehicle_id ? `<span class="sub">Bus ${esc(first.vehicle_id)}</span>` : ""}
       ${then ? `<span class="then">${then}</span>` : (live ? "" : `<span class="sub">${freshness === "stale" ? "last bus update is old" : freshness === "estimated" ? "no fresh bus location" : "no live bus yet"}</span>`)}
       ${first.trip_id && first.stop_id ? `<a class="trip-link" href="#/trip/${encodeURIComponent(first.trip_id)}/${encodeURIComponent(first.stop_id)}${first.vehicle_id ? "/" + encodeURIComponent(first.vehicle_id) : ""}">${first.vehicle_id ? (live ? "Follow this bus →" : "View last journey →") : "View trip stops →"}</a>` : ""}
     </div>

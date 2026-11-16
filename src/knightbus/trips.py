@@ -2,15 +2,17 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from knightbus.config import get_settings
-from knightbus.models import Route, Stop, StopTime, Trip
+from knightbus.models import Route, Stop, StopTime, Trip, TripUpdateState
 from knightbus.schemas import TripJourneyResponse, TripLiveBus, TripStop, TripStopsResponse
 from knightbus.search import split_stop_name
-from knightbus.vehicles import route_vehicles
+from knightbus.vehicles import route_vehicle_rows
 from knightbus.service import route_windows, valid_service_ids
+from knightbus.predictor import TRIP_UPDATE_MAX_AGE_SECONDS, get_predictor
+from knightbus.utils import delay_from_vehicle_progress
 
 
 def get_trip_stops(db: Session, trip_id: str) -> TripStopsResponse | None:
@@ -47,31 +49,31 @@ def get_trip_stops(db: Session, trip_id: str) -> TripStopsResponse | None:
 def get_trip_journey(db: Session, trip_id: str) -> TripJourneyResponse | None:
     """Only compare buses with the same ordered stops, never opposite directions.
 
-    Estimates use scheduled travel intervals anchored to the last GPS observation.
-    Missing/non-monotonic schedules and stale or unmappable positions have no ETA.
-    This deliberately avoids inventing travel times or extrapolating old GPS.
+    Arrival times use the same predictor and raw GPS observations as stop cards,
+    including model adjustments and provider updates. Invalid schedule paths,
+    stale GPS, and unmappable progress cannot invent an arrival estimate.
     """
     data = get_trip_stops(db, trip_id)
     if data is None:
         return None
     trip = db.execute(select(Trip).where(Trip.trip_id == trip_id).order_by(Trip.id)).scalars().first()
-    vehicles = route_vehicles(db, trip.route_id, feed_name=trip.feed_name) if trip.route_id else []
+    now = datetime.now(timezone.utc)
+    vehicles = [row[0] for row in route_vehicle_rows(db, trip.route_id, feed_name=trip.feed_name, now=now)] if trip.route_id else []
     trip_ids = {v.trip_id for v in vehicles if v.trip_id} | {trip_id}
     rows = db.execute(
-        select(Trip.trip_id, StopTime, Stop.stop_id, Trip.service_id)
+        select(Trip, StopTime, Stop)
         .join(StopTime, StopTime.trip_id_ref == Trip.id)
         .join(Stop, Stop.id == StopTime.stop_id_ref)
         .where(Trip.feed_name == trip.feed_name, Trip.trip_id.in_(trip_ids))
         .order_by(Trip.trip_id, StopTime.stop_sequence)
     ).all()
-    patterns: dict[str, list[tuple[StopTime, str]]] = {}
-    services = {}
-    for tid, stop_time, stop_id, sid in rows:
-        patterns.setdefault(tid, []).append((stop_time, stop_id))
-        services[tid] = sid
+    patterns: dict[str, list[tuple[StopTime, Stop]]] = {}
+    trips = {}
+    for source_trip, stop_time, stop in rows:
+        patterns.setdefault(source_trip.trip_id, []).append((stop_time, stop))
+        trips[source_trip.trip_id] = source_trip
     target = patterns.get(trip_id, [])
-    target_ids = [sid for _, sid in target]
-    now = datetime.now(timezone.utc)
+    target_ids = [stop.stop_id for _, stop in target]
     local_now = now.astimezone(get_settings().gtfs_service_tzinfo)
     local_seconds = local_now.hour * 3600 + local_now.minute * 60 + local_now.second
     active_services = []
@@ -79,35 +81,57 @@ def get_trip_journey(db: Session, trip_id: str) -> TripJourneyResponse | None:
         ids = valid_service_ids(db, local_now - timedelta(days=offset), trip.feed_name)
         bounds = route_windows(db, trip.feed_name, ids, trip.route_id).get(trip.route_id)
         if bounds and bounds[0] <= local_seconds + offset * 86400 <= bounds[1]:
-            active_services.append(ids)
+            active_services.append((local_now - timedelta(days=offset), ids))
+    predictor = get_predictor()
+    model = predictor.current_model()
+    updates = {}
+    for update in db.execute(select(TripUpdateState).where(
+        TripUpdateState.trip_id.in_(trip_ids),
+        or_(TripUpdateState.feed_name == trip.feed_name, TripUpdateState.feed_name.is_(None)),
+        TripUpdateState.observed_at >= now - timedelta(seconds=TRIP_UPDATE_MAX_AGE_SECONDS),
+        TripUpdateState.observed_at <= now + timedelta(seconds=30),
+    ).order_by(desc(TripUpdateState.observed_at)).limit(5000)).scalars():
+        updates.setdefault((update.trip_id, update.stop_id), update)
     buses = []
     for vehicle in vehicles:
         pattern = patterns.get(vehicle.trip_id, [])
-        if [sid for _, sid in pattern] != target_ids:
+        if [stop.stop_id for _, stop in pattern] != target_ids:
             continue
-        observed = vehicle.observed_at.replace(tzinfo=timezone.utc) if vehicle.observed_at.tzinfo is None else vehicle.observed_at
+        observed = datetime.fromtimestamp(vehicle.timestamp_unix, timezone.utc) if vehicle.timestamp_unix is not None else vehicle.observed_at
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
         if not timedelta(seconds=-30) <= now - observed <= timedelta(minutes=2):
             continue
         # Sequence disambiguates loop stops. If absent, only a unique stop is safe.
-        indices = [i for i, (st, sid) in enumerate(pattern)
+        indices = [i for i, (st, stop) in enumerate(pattern)
                    if (st.stop_sequence == vehicle.current_stop_sequence if vehicle.current_stop_sequence is not None
-                       else sid == vehicle.stop_id)]
+                       else stop.stop_id == vehicle.stop_id)]
         idx = indices[0] if len(indices) == 1 else None
-        arrivals = {}
-        if idx is not None and any(ids is None or services.get(vehicle.trip_id) in ids for ids in active_services):
-            anchor = pattern[idx][0].arrival_seconds
-            previous = anchor
+        arrivals, sources = {}, {}
+        source_trip = trips[vehicle.trip_id]
+        schedule = {st.stop_sequence: st.arrival_seconds for st, _ in pattern}
+        eligible = [reference for reference, ids in active_services
+                    if ids is None or source_trip.service_id in ids]
+        # Match the same service day the stop predictor associates with this GPS.
+        if eligible and idx is not None:
+            def score(reference):
+                delay = delay_from_vehicle_progress(now, vehicle, schedule, reference, get_settings().gtfs_service_tzinfo)
+                return abs(delay) if delay is not None else float("inf")
+            reference = min(eligible, key=score)
             for i in range(idx + 1, len(pattern)):
-                seconds = pattern[i][0].arrival_seconds
-                if anchor is None or seconds is None or previous is None or seconds < previous:
-                    break
-                previous = seconds
-                eta = observed + timedelta(seconds=seconds - anchor)
-                if eta >= now:
-                    arrivals[target[i][0].stop_sequence] = eta
+                stop_time, stop = pattern[i]
+                item = predictor.predict_arrival(
+                    now=now, stop=stop, stop_time=stop_time, trip=source_trip, route=None,
+                    vehicle=vehicle, trip_update=updates.get((vehicle.trip_id, stop.stop_id)),
+                    reference=reference, trip_schedule_seconds=schedule, ml_model=model,
+                )
+                if item is not None and item.prediction_source != "schedule":
+                    sequence = target[i][0].stop_sequence
+                    arrivals[sequence] = item.predicted_arrival_time
+                    sources[sequence] = item.prediction_source
         buses.append(TripLiveBus(
             vehicle_id=vehicle.vehicle_id, trip_id=vehicle.trip_id, observed_at=observed,
             current_stop_sequence=target[idx][0].stop_sequence if idx is not None else None,
-            arrivals=arrivals,
+            arrivals=arrivals, arrival_sources=sources, position_source=vehicle.position_source,
         ))
     return TripJourneyResponse(**data.model_dump(), buses=buses)

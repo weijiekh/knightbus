@@ -215,3 +215,15 @@ def test_missing_coordinates_do_not_displace_other_valid_source(db, monkeypatch)
     from knightbus.positions import latest_position_ids
     row = db.execute(select(VehicleState).where(VehicleState.id.in_(latest_position_ids(NOW, 120)))).scalar_one()
     assert row.position_source == "kiosk"
+
+
+def test_fetch_reports_provider_bot_check_without_exposing_page_body(monkeypatch):
+    import knightbus.kiosk as kiosk
+    original = httpx.Client
+    monkeypatch.setattr(kiosk.httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, headers={"Content-Type": "text/html"},
+                                       content=b'<html>Incapsula incident private-details</html>')
+    )))
+    with pytest.raises(kiosk.KioskUnavailable, match="provider bot-check page") as caught:
+        KioskCollector(settings()).fetch()
+    assert "private-details" not in str(caught.value)

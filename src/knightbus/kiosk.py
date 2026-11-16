@@ -22,6 +22,10 @@ MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 MAX_GPS_AGE_SECONDS = 120
 
 
+class KioskUnavailable(ValueError):
+    """The upstream endpoint returned a non-data response such as a bot check."""
+
+
 @dataclass(frozen=True)
 class KioskPosition:
     vehicle_id: str
@@ -84,6 +88,10 @@ class KioskCollector:
                     data.extend(chunk)
                     if len(data) > MAX_SNAPSHOT_BYTES:
                         raise ValueError("kiosk AVL snapshot exceeds size limit")
+                if "text/html" in response.headers.get("content-type", "").lower():
+                    markers = (b"incapsula", b"imperva", b"hcaptcha")
+                    reason = "provider bot-check page" if any(marker in data.lower() for marker in markers) else "HTML page"
+                    raise KioskUnavailable(f"kiosk returned {reason} instead of JSON (HTTP {response.status_code})")
         return FeedPayload(self.settings.kiosk_avl_url, datetime.now(timezone.utc), bytes(data))
 
     def collect(self, db: Session, payload: FeedPayload) -> dict[str, int]:

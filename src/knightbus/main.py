@@ -9,7 +9,7 @@ import uvicorn
 from knightbus.config import get_settings
 from knightbus.db import get_db
 from knightbus.logging import configure_logging
-from knightbus.predictor import ETAPredictor
+from knightbus.predictor import get_predictor
 from knightbus.models import Route, Stop
 from knightbus.search import search as search_stops_and_routes, split_stop_name
 from knightbus.schemas import HealthResponse, SearchResponse, SearchRoute, StopEtaResponse, StopResponse, TripJourneyResponse, TripStopsResponse, VehicleResponse, WalkRouteResponse
@@ -33,7 +33,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Knightbus API", version="0.1.0", lifespan=lifespan)
-predictor = ETAPredictor()
+predictor = get_predictor()
 MAX_BATCH_STOPS = 10
 
 

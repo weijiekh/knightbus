@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class EtaItem(BaseModel):
     stop_id: str
+    stop_sequence: int | None = None
     route_id: str | None = None
     route_short_name: str | None = None
     route_long_name: str | None = None
@@ -124,7 +125,9 @@ class TripLiveBus(BaseModel):
     trip_id: str
     observed_at: datetime
     current_stop_sequence: int | None = None
-    arrivals: dict[int, datetime] = {}
+    arrivals: dict[int, datetime] = Field(default_factory=dict)
+    arrival_sources: dict[int, str] = Field(default_factory=dict)
+    position_source: str = "gtfs"
 
 
 class TripJourneyResponse(TripStopsResponse):

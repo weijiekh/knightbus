@@ -8,11 +8,12 @@ from knightbus.positions import latest_position_ids
 from knightbus.schemas import VehicleResponse
 
 
-def route_vehicles(db: Session, route_id: str, feed_name: str | None = None) -> list[VehicleResponse]:
-    """Enrich positions with static metadata without crossing feed boundaries."""
+def route_vehicle_rows(db: Session, route_id: str, feed_name: str | None = None,
+                       now: datetime | None = None) -> list[tuple[VehicleState, str | None, int | None, str | None]]:
+    """Return the actual selected GPS records and their static metadata."""
     query = (
         select(VehicleState, Trip.headsign, Trip.direction_id, Stop.name)
-        .where(VehicleState.id.in_(latest_position_ids(datetime.now(timezone.utc), 30 * 60)))
+        .where(VehicleState.id.in_(latest_position_ids(now or datetime.now(timezone.utc), 30 * 60)))
         .outerjoin(Trip, and_(Trip.feed_name == VehicleState.feed_name, Trip.trip_id == VehicleState.trip_id))
         .outerjoin(Stop, and_(Stop.feed_name == VehicleState.feed_name, Stop.stop_id == VehicleState.stop_id))
         .where(or_(VehicleState.route_id == route_id, Trip.route_id == route_id))
@@ -21,7 +22,10 @@ def route_vehicles(db: Session, route_id: str, feed_name: str | None = None) -> 
     )
     if feed_name is not None:
         query = query.where(VehicleState.feed_name == feed_name)
-    rows = db.execute(query)
+    return [(v, headsign, direction, name) for v, headsign, direction, name in db.execute(query)]
+
+
+def route_vehicles(db: Session, route_id: str, feed_name: str | None = None) -> list[VehicleResponse]:
     return [
         VehicleResponse(
             position_source=v.position_source,
@@ -32,5 +36,5 @@ def route_vehicles(db: Session, route_id: str, feed_name: str | None = None) -> 
                          if v.timestamp_unix is not None else v.observed_at),
             headsign=headsign, direction_id=direction, stop_name=stop_name,
         )
-        for v, headsign, direction, stop_name in rows
+        for v, headsign, direction, stop_name in route_vehicle_rows(db, route_id, feed_name)
     ]
