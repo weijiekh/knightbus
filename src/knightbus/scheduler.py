@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from knightbus.collector import GTFSCollector
 from knightbus.config import FeedConfig, Settings, get_settings
-from knightbus.kiosk import KioskCollector
+from knightbus.kiosk import KioskCollector, KioskUnavailable
 from knightbus.db import Base, SessionLocal, engine
 from knightbus.etl import ETLService
 from knightbus.logging import configure_logging
@@ -66,6 +66,8 @@ def poll_realtime(*, active_hours: bool, poll_label: str) -> None:
             payload = collector.fetch()
             with SessionLocal() as db:
                 collector.collect(db, payload)
+        except KioskUnavailable as exc:
+            logger.warning("kiosk AVL unavailable; retaining GTFS fallback: %s", exc)
         except Exception:
             # Kiosk errors (including HTML bot checks) never interrupt GTFS polling.
             logger.exception("kiosk AVL poll failed; retaining GTFS fallback")

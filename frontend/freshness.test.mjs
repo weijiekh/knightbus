@@ -37,7 +37,7 @@ test("arrival countdown uses predicted time and does not freeze on minutes_away"
   ctx.item = { predicted_arrival_time: "2026-11-04T00:10:00Z", minutes_away: 45 };
   assert.equal(vm.runInContext("minutesOf(item)", ctx), 10);
   ctx.item.predicted_arrival_time = "2026-11-04T00:00:59Z";
-  assert.equal(vm.runInContext("minutesOf(item)", ctx), 0);
+  assert.equal(vm.runInContext("minutesOf(item)", ctx), 1);
   ctx.item = { minutes_away: 3 };
   assert.equal(vm.runInContext("minutesOf(item)", ctx), null);
 });

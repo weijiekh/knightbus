@@ -1,8 +1,9 @@
 import logging
-from math import cos, radians
+from math import ceil, cos, radians
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
+from functools import lru_cache
 
 from sqlalchemy import Select, desc, or_, select
 from sqlalchemy.orm import Session
@@ -134,102 +135,127 @@ class ETAPredictor:
 
         items: list[EtaItem] = []
         for stop_time, trip, route, reference, operating in schedule_rows:
-            scheduled_arrival = scheduled_seconds_to_datetime(reference, stop_time.arrival_seconds, self._service_tz)
             has_live = operating and trip.id in live_days and live_days[trip.id][1] == reference.date()
             trip_update = latest_updates.get(trip.trip_id) if has_live else None
             vehicle = latest_vehicles.get(trip.trip_id) if has_live else None
-            if (
-                vehicle is not None
-                and vehicle.current_stop_sequence is not None
-                and vehicle.current_stop_sequence > stop_time.stop_sequence
-            ):
-                continue  # this bus has already passed the stop
-            delay_seconds = trip_update.delay_seconds if trip_update and trip_update.delay_seconds is not None else None
-
-            if delay_seconds is None and vehicle:
-                delay_seconds = delay_from_vehicle_progress(
-                    now=now,
-                    vehicle=vehicle,
-                    trip_schedule_seconds=trip_schedule_seconds.get(trip.id, {}),
-                    service_reference=reference,
-                    service_tz=self._service_tz,
-                )
-
-            if trip_update and trip_update.arrival_time_unix:
-                predicted_arrival = datetime.fromtimestamp(trip_update.arrival_time_unix, tz=timezone.utc)
-                source = "heuristic"
-            elif scheduled_arrival:
-                predicted_arrival = scheduled_arrival.replace(tzinfo=timezone.utc)
-                if delay_seconds is not None:
-                    predicted_arrival = predicted_arrival.fromtimestamp(
-                        predicted_arrival.timestamp() + delay_seconds,
-                        tz=timezone.utc,
-                    )
-                source = "schedule" if delay_seconds is None else "heuristic"
-            else:
-                predicted_arrival = None
-                source = "schedule"
-
-            if (
-                predicted_arrival
-                and ml_model is not None
-                and reference.date() == local_now.date()
-                and delay_seconds is not None
-                and (vehicle is None or vehicle.position_source != "kiosk")
-                and predicted_arrival >= now
-                and not (trip_update and trip_update.arrival_time_unix)
-            ):
-                feature_row = build_feature_row(
-                    now=now,
-                    stop=stop,
-                    stop_time=stop_time,
-                    trip=trip,
-                    vehicle=vehicle,
-                    delay_seconds=delay_seconds,
-                )
-                if feature_row.baseline_eta_seconds is not None:
-                    residual_seconds = ml_model.predict(feature_row.features)
-                    adjusted_seconds = max(0, int(feature_row.baseline_eta_seconds + residual_seconds))
-                    predicted_arrival = now + timedelta(seconds=adjusted_seconds)
-                    source = "ml_residual"
-
-            # Never clamp an expired prediction to a fictitious "Now" arrival.
-            if predicted_arrival is None or predicted_arrival < now:
-                continue
-
-            minutes_away = None
-            if predicted_arrival:
-                minutes_away = max(0, int((predicted_arrival - now).total_seconds() // 60))
-
-            data_timestamp = now
-            if trip_update:
-                data_timestamp = trip_update.observed_at
-            elif vehicle:
-                data_timestamp = (
-                    datetime.fromtimestamp(vehicle.timestamp_unix, timezone.utc)
-                    if vehicle.timestamp_unix is not None else vehicle.observed_at
-                )
-
-            items.append(
-                EtaItem(
-                    stop_id=stop_id,
-                    route_id=trip.route_id,
-                    route_short_name=route.short_name if route else None,
-                    route_long_name=route.long_name if route else None,
-                    trip_id=trip.trip_id,
-                    headsign=trip.headsign,
-                    vehicle_id=vehicle.vehicle_id if vehicle else (trip_update.vehicle_id if trip_update else None),
-                    predicted_arrival_time=predicted_arrival,
-                    scheduled_arrival_time=scheduled_arrival,
-                    minutes_away=minutes_away,
-                    prediction_source=source,
-                    position_source=vehicle.position_source if vehicle else ("gtfs" if trip_update else None),
-                    data_timestamp=data_timestamp,
-                    delay_seconds=delay_seconds,
-                )
+            item = self.predict_arrival(
+                now=now, stop=stop, stop_time=stop_time, trip=trip, route=route,
+                vehicle=vehicle, trip_update=trip_update, reference=reference,
+                trip_schedule_seconds=trip_schedule_seconds.get(trip.id, {}), ml_model=ml_model,
             )
+            if item is not None:
+                items.append(item)
 
         return sorted(items, key=lambda item: item.predicted_arrival_time)[:10]
+
+    def predict_arrival(
+        self, *, now: datetime, stop: Stop, stop_time: StopTime, trip: Trip,
+        route: Route | None, vehicle: VehicleState | None, trip_update: TripUpdateState | None,
+        reference: datetime, trip_schedule_seconds: dict[int, int | None],
+        ml_model: ResidualModel | None,
+    ) -> EtaItem | None:
+        """One arrival calculation shared by stop cards and the live journey list."""
+        scheduled_arrival = scheduled_seconds_to_datetime(reference, stop_time.arrival_seconds, self._service_tz)
+        if (
+            vehicle is not None
+            and vehicle.current_stop_sequence is not None
+            and vehicle.current_stop_sequence > stop_time.stop_sequence
+        ):
+            return None  # this bus has already passed the stop
+        if vehicle is not None and not (trip_update and trip_update.arrival_time_unix):
+            previous = None
+            for sequence, seconds in sorted(trip_schedule_seconds.items()):
+                if vehicle.current_stop_sequence is None or not vehicle.current_stop_sequence <= sequence <= stop_time.stop_sequence:
+                    continue
+                if seconds is None or (previous is not None and seconds < previous):
+                    return None
+                previous = seconds
+        delay_seconds = trip_update.delay_seconds if trip_update and trip_update.delay_seconds is not None else None
+
+        if delay_seconds is None and vehicle:
+            delay_seconds = delay_from_vehicle_progress(
+                now=now,
+                vehicle=vehicle,
+                trip_schedule_seconds=trip_schedule_seconds,
+                service_reference=reference,
+                service_tz=self._service_tz,
+            )
+
+        if trip_update and trip_update.arrival_time_unix:
+            predicted_arrival = datetime.fromtimestamp(trip_update.arrival_time_unix, tz=timezone.utc)
+            source = "heuristic"
+        elif scheduled_arrival:
+            predicted_arrival = scheduled_arrival.replace(tzinfo=timezone.utc)
+            if delay_seconds is not None:
+                predicted_arrival = predicted_arrival.fromtimestamp(
+                    predicted_arrival.timestamp() + delay_seconds,
+                    tz=timezone.utc,
+                )
+            source = "schedule" if delay_seconds is None else "heuristic"
+        else:
+            predicted_arrival = None
+            source = "schedule"
+
+        if (
+            predicted_arrival
+            and ml_model is not None
+            and reference.astimezone(self._service_tz).date() == now.astimezone(self._service_tz).date()
+            and delay_seconds is not None
+            and (vehicle is None or vehicle.position_source != "kiosk")
+            and predicted_arrival >= now
+            and not (trip_update and trip_update.arrival_time_unix)
+        ):
+            evidence_time = vehicle.observed_at if vehicle else trip_update.observed_at
+            if evidence_time.tzinfo is None:
+                evidence_time = evidence_time.replace(tzinfo=timezone.utc)
+            feature_row = build_feature_row(
+                now=evidence_time,
+                stop=stop,
+                stop_time=stop_time,
+                trip=trip,
+                vehicle=vehicle,
+                delay_seconds=delay_seconds,
+            )
+            if feature_row.baseline_eta_seconds is not None:
+                residual_seconds = ml_model.predict(feature_row.features)
+                adjusted_seconds = max(0, int(feature_row.baseline_eta_seconds + residual_seconds))
+                predicted_arrival = evidence_time + timedelta(seconds=adjusted_seconds)
+                source = "ml_residual"
+
+        # Never clamp an expired prediction to a fictitious "Now" arrival.
+        if predicted_arrival is None or predicted_arrival < now:
+            return None
+
+        minutes_away = None
+        if predicted_arrival:
+            minutes_away = max(0, ceil((predicted_arrival - now).total_seconds() / 60))
+
+        data_timestamp = now
+        if trip_update:
+            data_timestamp = trip_update.observed_at
+        elif vehicle:
+            data_timestamp = (
+                datetime.fromtimestamp(vehicle.timestamp_unix, timezone.utc)
+                if vehicle.timestamp_unix is not None else vehicle.observed_at
+            )
+
+        return EtaItem(
+            stop_id=stop.stop_id,
+            stop_sequence=stop_time.stop_sequence,
+            route_id=trip.route_id,
+            route_short_name=route.short_name if route else None,
+            route_long_name=route.long_name if route else None,
+            trip_id=trip.trip_id,
+            headsign=trip.headsign,
+            vehicle_id=vehicle.vehicle_id if vehicle else (trip_update.vehicle_id if trip_update else None),
+            predicted_arrival_time=predicted_arrival,
+            scheduled_arrival_time=scheduled_arrival,
+            minutes_away=minutes_away,
+            prediction_source=source,
+            position_source=vehicle.position_source if vehicle else ("gtfs" if trip_update else None),
+            data_timestamp=data_timestamp,
+            delay_seconds=delay_seconds,
+        )
 
     def list_route_vehicles(self, db: Session, route_id: str) -> list[VehicleState]:
         query = (
@@ -347,3 +373,9 @@ class ETAPredictor:
         for trip_id_ref, stop_sequence, arrival_seconds in rows:
             schedule.setdefault(trip_id_ref, {})[stop_sequence] = arrival_seconds
         return schedule
+
+
+@lru_cache(maxsize=1)
+def get_predictor() -> ETAPredictor:
+    """Share the loaded model between stop and journey requests."""
+    return ETAPredictor()
