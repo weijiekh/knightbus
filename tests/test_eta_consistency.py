@@ -83,3 +83,68 @@ def test_invalid_intermediate_schedule_suppresses_both_views(scenario, monkeypat
     db.commit()
     assert predictor.get_stop_etas(db, "s2") == []
     assert trips.get_trip_journey(db, "t").buses[0].arrivals == {}
+
+
+def test_each_bus_sharing_a_trip_keeps_its_own_eta_and_passed_stop_filter(scenario, monkeypatch):
+    db, predictor, clock = scenario
+    monkeypatch.setattr(predictor, "current_model", lambda: None)
+    observed = clock["now"] - timedelta(seconds=10)
+    db.add(VehicleState(feed_name="default", vehicle_id="ahead", trip_id="t", route_id="r",
+                        lat=3.03, lon=101.71, current_stop_sequence=2, observed_at=observed,
+                        timestamp_unix=int(observed.timestamp())))
+    # A historic record for the same bus must not create another arrival.
+    db.add(VehicleState(feed_name="default", vehicle_id="ahead", trip_id="t", route_id="r",
+                        lat=3.02, lon=101.71, current_stop_sequence=1,
+                        observed_at=observed - timedelta(seconds=20),
+                        timestamp_unix=int(observed.timestamp()) - 20))
+    db.commit()
+    buses = {b.vehicle_id: b for b in trips.get_trip_journey(db, "t").buses}
+    arrivals = {item.vehicle_id: item for item in predictor.get_stop_etas(db, "s2")}
+    assert set(arrivals) == {"bus", "ahead"}
+    for vehicle_id, item in arrivals.items():
+        assert item.predicted_arrival_time == buses[vehicle_id].arrivals[3]
+    assert arrivals["ahead"].predicted_arrival_time < arrivals["bus"].predicted_arrival_time
+    # Move the leading bus beyond the stop: the trailing bus must remain visible.
+    db.add(VehicleState(feed_name="default", vehicle_id="ahead", trip_id="t", route_id="r",
+                        lat=3.04, lon=101.71, current_stop_sequence=3, observed_at=clock["now"],
+                        timestamp_unix=int(clock["now"].timestamp())))
+    db.commit()
+    assert [item.vehicle_id for item in predictor.get_stop_etas(db, "s1")] == ["bus"]
+
+
+def test_model_residuals_cannot_reverse_stop_order_in_either_view(scenario, monkeypatch):
+    db, predictor, clock = scenario
+
+    class ReversingModel:
+        def predict(self, features):
+            return 0 if features["stop_sequence"] == 2 else -900
+
+    monkeypatch.setattr(predictor, "current_model", lambda: ReversingModel())
+    bus = trips.get_trip_journey(db, "t").buses[0]
+    assert bus.arrivals[3] >= bus.arrivals[2]
+    for stop_id, sequence in (("s1", 2), ("s2", 3)):
+        item = predictor.get_stop_etas(db, stop_id)[0]
+        assert item.predicted_arrival_time == bus.arrivals[sequence]
+        expected = (item.predicted_arrival_time - clock["now"]).total_seconds()
+        assert item.minutes_away == int((expected + 59) // 60)
+    clock["now"] += timedelta(seconds=15)
+    again = trips.get_trip_journey(db, "t").buses[0]
+    assert again.arrivals == bus.arrivals
+
+
+def test_vehicle_specific_update_is_not_applied_to_another_bus(scenario, monkeypatch):
+    db, predictor, clock = scenario
+    monkeypatch.setattr(predictor, "current_model", lambda: None)
+    observed = clock["now"] - timedelta(seconds=10)
+    db.add(VehicleState(feed_name="default", vehicle_id="ahead", trip_id="t", route_id="r",
+                        lat=3.03, lon=101.71, current_stop_sequence=2, observed_at=observed,
+                        timestamp_unix=int(observed.timestamp())))
+    arrival = clock["now"] + timedelta(seconds=123)
+    db.add(TripUpdateState(feed_name="default", trip_id="t", stop_id="s2", stop_sequence=3,
+                           vehicle_id="ahead", arrival_time_unix=int(arrival.timestamp()),
+                           observed_at=clock["now"]))
+    db.commit()
+    buses = {b.vehicle_id: b for b in trips.get_trip_journey(db, "t").buses}
+    arrivals = {item.vehicle_id: item.predicted_arrival_time for item in predictor.get_stop_etas(db, "s2")}
+    assert arrivals["ahead"] == buses["ahead"].arrivals[3] == arrival
+    assert arrivals["bus"] == buses["bus"].arrivals[3] > arrival

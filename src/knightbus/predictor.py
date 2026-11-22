@@ -116,37 +116,112 @@ class ETAPredictor:
 
         # A recurring trip_id can exist on both sides of midnight. Associate
         # realtime evidence with one service day, rather than showing one bus twice.
-        live_days: dict[int, tuple[float, date]] = {}
+        live_days: dict[tuple[int, int | None], tuple[float, date]] = {}
         for st, trip, _, reference, operating in schedule_rows:
             if not operating or trip.trip_id not in live_ids:
                 continue
-            vehicle = latest_vehicles.get(trip.trip_id)
-            delay = delay_from_vehicle_progress(
-                now, vehicle, trip_schedule_seconds.get(trip.id, {}), reference, self._service_tz,
-            ) if vehicle else None
-            scheduled = scheduled_seconds_to_datetime(reference, st.arrival_seconds, self._service_tz)
-            if scheduled is None:
-                continue
-            update = latest_updates.get(trip.trip_id)
-            target = datetime.fromtimestamp(update.arrival_time_unix, timezone.utc) if update and update.arrival_time_unix else now
-            score = abs(delay) if delay is not None else abs((scheduled - target).total_seconds())
-            if trip.id not in live_days or score < live_days[trip.id][0]:
-                live_days[trip.id] = (score, reference.date())
+            for vehicle in latest_vehicles.get(trip.trip_id, [None]):
+                delay = delay_from_vehicle_progress(
+                    now, vehicle, trip_schedule_seconds.get(trip.id, {}), reference, self._service_tz,
+                ) if vehicle else None
+                scheduled = scheduled_seconds_to_datetime(reference, st.arrival_seconds, self._service_tz)
+                if scheduled is None:
+                    continue
+                update = latest_updates.get(trip.trip_id)
+                target = datetime.fromtimestamp(update.arrival_time_unix, timezone.utc) if update and update.arrival_time_unix else now
+                score = abs(delay) if delay is not None else abs((scheduled - target).total_seconds())
+                key = (trip.id, vehicle.id if vehicle else None)
+                if key not in live_days or score < live_days[key][0]:
+                    live_days[key] = (score, reference.date())
 
+        # Load complete paths once so both views apply the same ordering constraint.
+        patterns: dict[int, list[tuple[StopTime, Stop]]] = {}
+        if trip_schedule_seconds:
+            for st, path_stop in db.execute(
+                select(StopTime, Stop).join(Stop, Stop.id == StopTime.stop_id_ref)
+                .where(StopTime.trip_id_ref.in_(trip_schedule_seconds))
+                .order_by(StopTime.stop_sequence)
+            ):
+                patterns.setdefault(st.trip_id_ref, []).append((st, path_stop))
+        paths: dict[tuple[int, int, date], dict[int, EtaItem]] = {}
         items: list[EtaItem] = []
         for stop_time, trip, route, reference, operating in schedule_rows:
-            has_live = operating and trip.id in live_days and live_days[trip.id][1] == reference.date()
-            trip_update = latest_updates.get(trip.trip_id) if has_live else None
-            vehicle = latest_vehicles.get(trip.trip_id) if has_live else None
-            item = self.predict_arrival(
-                now=now, stop=stop, stop_time=stop_time, trip=trip, route=route,
-                vehicle=vehicle, trip_update=trip_update, reference=reference,
-                trip_schedule_seconds=trip_schedule_seconds.get(trip.id, {}), ml_model=ml_model,
-            )
-            if item is not None:
-                items.append(item)
+            candidates = latest_vehicles.get(trip.trip_id, [None])
+            has_live_vehicle = False
+            for vehicle in candidates:
+                key = (trip.id, vehicle.id if vehicle else None)
+                has_live = operating and key in live_days and live_days[key][1] == reference.date()
+                if vehicle is not None:
+                    if not has_live:
+                        continue
+                    has_live_vehicle = True
+                    path_key = (trip.id, vehicle.id, reference.date())
+                    if path_key not in paths:
+                        paths[path_key] = self.predict_vehicle_arrivals(
+                            db, now=now, pattern=patterns.get(trip.id, []), trip=trip,
+                            route=route, vehicle=vehicle, reference=reference, ml_model=ml_model,
+                        )
+                    item = paths[path_key].get(stop_time.stop_sequence)
+                else:
+                    item = self.predict_arrival(
+                        now=now, stop=stop, stop_time=stop_time, trip=trip, route=route,
+                        vehicle=None, trip_update=latest_updates.get(trip.trip_id) if has_live else None,
+                        reference=reference, trip_schedule_seconds={}, ml_model=ml_model,
+                    )
+                if item is not None:
+                    items.append(item)
+            if candidates[0] is not None and not has_live_vehicle:
+                item = self.predict_arrival(
+                    now=now, stop=stop, stop_time=stop_time, trip=trip, route=route,
+                    vehicle=None, trip_update=None, reference=reference,
+                    trip_schedule_seconds={}, ml_model=ml_model,
+                )
+                if item is not None:
+                    items.append(item)
 
         return sorted(items, key=lambda item: item.predicted_arrival_time)[:10]
+
+    def predict_vehicle_arrivals(
+        self, db: Session, *, now: datetime, pattern: list[tuple[StopTime, Stop]],
+        trip: Trip, route: Route | None, vehicle: VehicleState, reference: datetime,
+        ml_model: ResidualModel | None,
+    ) -> dict[int, EtaItem]:
+        """Predict one bus's complete path, identically for stop and journey views.
+
+        Residuals are independent per stop. A later stop cannot arrive before an
+        earlier one; carry the preceding estimate forward when necessary.
+        Provider updates with a vehicle/sequence must match this exact bus/visit.
+        """
+        updates = list(db.execute(select(TripUpdateState).where(
+            TripUpdateState.trip_id == trip.trip_id,
+            or_(TripUpdateState.feed_name == trip.feed_name, TripUpdateState.feed_name.is_(None)),
+            or_(TripUpdateState.vehicle_id == vehicle.vehicle_id, TripUpdateState.vehicle_id.is_(None)),
+            TripUpdateState.observed_at >= now - timedelta(seconds=TRIP_UPDATE_MAX_AGE_SECONDS),
+            TripUpdateState.observed_at <= now + timedelta(seconds=30),
+        ).order_by(desc(TripUpdateState.observed_at))).scalars())
+        schedule = {st.stop_sequence: st.arrival_seconds for st, _ in pattern}
+        result: dict[int, EtaItem] = {}
+        previous = None
+        for st, stop in pattern:
+            if vehicle.current_stop_sequence is None or st.stop_sequence < vehicle.current_stop_sequence:
+                continue
+            update = next((u for u in updates if u.stop_id == stop.stop_id
+                           and (u.stop_sequence is None or u.stop_sequence == st.stop_sequence)), None)
+            item = self.predict_arrival(
+                now=now, stop=stop, stop_time=st, trip=trip, route=route,
+                vehicle=vehicle, trip_update=update, reference=reference,
+                trip_schedule_seconds=schedule, ml_model=ml_model,
+            )
+            if item is None:
+                continue
+            if previous is not None and item.predicted_arrival_time < previous:
+                item = item.model_copy(update={
+                    "predicted_arrival_time": previous,
+                    "minutes_away": max(0, ceil((previous - now).total_seconds() / 60)),
+                })
+            previous = item.predicted_arrival_time
+            result[st.stop_sequence] = item
+        return result
 
     def predict_arrival(
         self, *, now: datetime, stop: Stop, stop_time: StopTime, trip: Trip,
@@ -339,7 +414,7 @@ class ETAPredictor:
         return latest
 
     @staticmethod
-    def _latest_vehicles(db: Session, now: datetime, feed_name: str) -> dict[str, VehicleState]:
+    def _latest_vehicles(db: Session, now: datetime, feed_name: str) -> dict[str, list[VehicleState]]:
         """Rank before matching trips, so old trips/stop matches cannot reappear."""
         rows = db.execute(
             select(VehicleState)
@@ -350,10 +425,10 @@ class ETAPredictor:
             )
             .order_by(desc(VehicleState.timestamp_unix), desc(VehicleState.observed_at))
         ).scalars().all()
-        result: dict[str, VehicleState] = {}
+        result: dict[str, list[VehicleState]] = {}
         for row in rows:
             if row.trip_id:
-                result.setdefault(row.trip_id, row)
+                result.setdefault(row.trip_id, []).append(row)
         return result
 
     @staticmethod

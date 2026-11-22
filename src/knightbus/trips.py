@@ -2,16 +2,16 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import desc, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from knightbus.config import get_settings
-from knightbus.models import Route, Stop, StopTime, Trip, TripUpdateState
+from knightbus.models import Route, Stop, StopTime, Trip
 from knightbus.schemas import TripJourneyResponse, TripLiveBus, TripStop, TripStopsResponse
 from knightbus.search import split_stop_name
 from knightbus.vehicles import route_vehicle_rows
 from knightbus.service import route_windows, valid_service_ids
-from knightbus.predictor import TRIP_UPDATE_MAX_AGE_SECONDS, get_predictor
+from knightbus.predictor import get_predictor
 from knightbus.utils import delay_from_vehicle_progress
 
 
@@ -84,14 +84,6 @@ def get_trip_journey(db: Session, trip_id: str) -> TripJourneyResponse | None:
             active_services.append((local_now - timedelta(days=offset), ids))
     predictor = get_predictor()
     model = predictor.current_model()
-    updates = {}
-    for update in db.execute(select(TripUpdateState).where(
-        TripUpdateState.trip_id.in_(trip_ids),
-        or_(TripUpdateState.feed_name == trip.feed_name, TripUpdateState.feed_name.is_(None)),
-        TripUpdateState.observed_at >= now - timedelta(seconds=TRIP_UPDATE_MAX_AGE_SECONDS),
-        TripUpdateState.observed_at <= now + timedelta(seconds=30),
-    ).order_by(desc(TripUpdateState.observed_at)).limit(5000)).scalars():
-        updates.setdefault((update.trip_id, update.stop_id), update)
     buses = []
     for vehicle in vehicles:
         pattern = patterns.get(vehicle.trip_id, [])
@@ -118,13 +110,12 @@ def get_trip_journey(db: Session, trip_id: str) -> TripJourneyResponse | None:
                 delay = delay_from_vehicle_progress(now, vehicle, schedule, reference, get_settings().gtfs_service_tzinfo)
                 return abs(delay) if delay is not None else float("inf")
             reference = min(eligible, key=score)
+            predictions = predictor.predict_vehicle_arrivals(
+                db, now=now, pattern=pattern, trip=source_trip, route=None,
+                vehicle=vehicle, reference=reference, ml_model=model,
+            )
             for i in range(idx + 1, len(pattern)):
-                stop_time, stop = pattern[i]
-                item = predictor.predict_arrival(
-                    now=now, stop=stop, stop_time=stop_time, trip=source_trip, route=None,
-                    vehicle=vehicle, trip_update=updates.get((vehicle.trip_id, stop.stop_id)),
-                    reference=reference, trip_schedule_seconds=schedule, ml_model=model,
-                )
+                item = predictions.get(pattern[i][0].stop_sequence)
                 if item is not None and item.prediction_source != "schedule":
                     sequence = target[i][0].stop_sequence
                     arrivals[sequence] = item.predicted_arrival_time
