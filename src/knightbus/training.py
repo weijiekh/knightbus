@@ -209,13 +209,12 @@ class TrainingService:
     def _collect_training_rows(self, db: Session) -> list[TrainingRow]:
         rows: list[TrainingRow] = []
         schedule_cache: dict[int, dict[int, int | None]] = {}
-        stop_time_cache: dict[tuple[int, int], StopTime | None] = {}
         stop_cache: dict[int, Stop | None] = {}
         trip_stops_cache: dict[int, list[tuple[int, Stop, StopTime]]] = {}
 
         query = (
             select(VehicleState, Trip)
-            .join(Trip, VehicleState.trip_id == Trip.trip_id)
+            .join(Trip, (VehicleState.trip_id == Trip.trip_id) & (VehicleState.feed_name == Trip.feed_name))
             .where(
                 VehicleState.trip_id.is_not(None),
                 VehicleState.position_source == "gtfs",
@@ -226,14 +225,17 @@ class TrainingService:
             .limit(MAX_TRAINING_ROWS)
         )
 
-        by_trip: dict[str, list[VehicleState]] = {}
-        trip_lookup: dict[str, Trip] = {}
+        # A provider trip_id can be shared by multiple buses and feeds. Arrival
+        # events (including their debounce state) must belong to this exact bus.
+        # Trip's primary key identifies the feed-specific trip selected above.
+        by_bus_trip: dict[tuple[int, str], list[VehicleState]] = {}
+        trip_lookup: dict[int, Trip] = {}
         for vehicle, trip in db.execute(query).all():
-            by_trip.setdefault(vehicle.trip_id, []).append(vehicle)
-            trip_lookup[vehicle.trip_id] = trip
+            by_bus_trip.setdefault((trip.id, vehicle.vehicle_id), []).append(vehicle)
+            trip_lookup[trip.id] = trip
 
-        for trip_id, states in by_trip.items():
-            trip = trip_lookup[trip_id]
+        for (trip_id_ref, _vehicle_id), states in by_bus_trip.items():
+            trip = trip_lookup[trip_id_ref]
             states.sort(key=lambda item: item.observed_at)
             trip_stops = self._get_trip_stops(db, trip_stops_cache, stop_cache, trip.id)
             if not trip_stops:
