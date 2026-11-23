@@ -197,7 +197,7 @@ flowchart TD
 - Treats trip updates as optional because the current Prasarana GTFS-R docs expose vehicle positions only
 - Serves stop ETAs using schedule + vehicle-progress delay heuristics
 - Optionally applies a LightGBM residual model when trained
-  - Training labels are derived from vehicle position proximity to GTFS stop coordinates
+  - Training labels are derived from vehicle position proximity to GTFS stop coordinates, isolated by feed, trip, and vehicle; positions without a matching feed are excluded
   - Requires at least 5,000 labeled rows (ideally 1–2 weeks of data) before training activates
   - Skips training if the newest data is older than 48 hours to avoid stale models
   - Training metrics include per-route and per-stop coverage to flag under-represented categories
